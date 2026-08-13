@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: inventory-cassano
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: UPLOAD_DIR
+        value: /app/data/uploads
+    disk:
+      name: cassano-data
+      mountPath: /app/data
+      sizeGB: 1
+      # Uploads are kept on the same persistent disk by mounting /app/data.
