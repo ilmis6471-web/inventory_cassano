@@ -1,18 +1,10 @@
 {
-  "name": "inventory-cassano",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "bcryptjs": "^3.0.2",
-    "better-sqlite3": "^11.10.0",
-    "express": "^5.1.0",
-    "express-session": "^1.18.2",
-    "multer": "^2.0.2"
-  },
-  "engines": {
-    "node": ">=20"
-  }
+  "name":"inventory-cassano",
+  "version":"2.0.0",
+  "private":true,
+  "description":"Inventory Cassano with PostgreSQL",
+  "main":"server.js",
+  "scripts":{"start":"node server.js"},
+  "engines":{"node":">=20"},
+  "dependencies":{"bcryptjs":"^2.4.3","express":"^4.21.2","express-session":"^1.18.1","multer":"^1.4.5-lts.1","pg":"^8.16.3"}
 }
