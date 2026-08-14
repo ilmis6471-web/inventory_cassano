@@ -6,6 +6,7 @@ const multer=require('multer');
 const {Pool}=require('pg');
 
 const app=express();
+app.set('trust proxy',1);
 const PORT=process.env.PORT||3000;
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:false,max:5});
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024}});
@@ -41,7 +42,7 @@ async function auth(req,res,next){try{const u=await me(req);if(!u)return res.sta
 function has(u,p){return Array.isArray(u.permissions)?u.permissions.includes(p):JSON.parse(u.permissions||'[]').includes(p)}
 function need(p){return (req,res,next)=>{if(!has(req.me,p))return res.status(403).json({error:'Role tidak memiliki akses: '+p});next()}}
 
-app.post('/api/login',async(req,res)=>{try{const u=await one('SELECT * FROM users WHERE email=$1',[req.body.email]);if(!u||!bcrypt.compareSync(req.body.password,u.password))return res.status(401).json({error:'Email atau password salah'});if(!u.active)return res.status(403).json({error:'Akun nonaktif'});req.session.user={id:u.id};res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/login',async(req,res)=>{try{const u=await one('SELECT * FROM users WHERE email=$1',[req.body.email]);if(!u||!bcrypt.compareSync(req.body.password,u.password))return res.status(401).json({error:'Email atau password salah'});if(!u.active)return res.status(403).json({error:'Akun nonaktif'});req.session.user={id:u.id};req.session.save(err=>{if(err)return res.status(500).json({error:'Gagal menyimpan sesi'});res.json({ok:true})})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/logout',(req,res)=>req.session.destroy(()=>res.json({ok:true})));
 app.get('/health',(req,res)=>res.json({ok:true,service:'inventory-cassano',database:'postgresql'}));
 app.get('/api/me',auth,async(req,res)=>res.json({id:req.me.id,name:req.me.name,email:req.me.email,role:req.me.role,permissions:req.me.permissions}));
