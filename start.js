@@ -2,9 +2,7 @@ const fs=require('fs');
 const path=require('path');
 const src=fs.readFileSync(path.join(__dirname,'server.js'),'utf8');
 
-// server.js already contains the stock-edit protection. This wrapper only adds
-// the persistent Cassano vault routes and schema, without changing the server's
-// existing stock/order logic.
+// Cassano vault schema + routes. Vault editing remains Bos/Consigliere only.
 const vaultSchema=`
 CREATE TABLE IF NOT EXISTS vault(
   id INTEGER PRIMARY KEY DEFAULT 1,
@@ -34,26 +32,54 @@ app.get('/api/vault',auth,async(req,res)=>{
 });
 app.post('/api/vault/adjust',auth,async(req,res)=>{
   if(!['Bos','Consigliere'].includes(req.me.role))return res.status(403).json({error:'Hanya Bos dan Consigliere yang dapat mengedit uang brangkas'});
-  const amount=Number(req.body.amount);
-  const type=req.body.type;
-  const note=(req.body.note||'').trim();
+  const amount=Number(req.body.amount),type=req.body.type,note=(req.body.note||'').trim();
   if(!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Nominal tidak valid'});
   if(!['IN','OUT'].includes(type))return res.status(400).json({error:'Jenis transaksi tidak valid'});
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
     const v=(await client.query('SELECT * FROM vault WHERE id=1 FOR UPDATE')).rows[0];
-    const current=Number(v.balance||0);
-    const next=type==='IN'?current+amount:current-amount;
+    const current=Number(v.balance||0),next=type==='IN'?current+amount:current-amount;
     if(next<0)throw new Error('Saldo brangkas tidak mencukupi');
     await client.query('UPDATE vault SET balance=$1,updated_at=NOW() WHERE id=1',[next]);
     await client.query('INSERT INTO vault_transactions(vault_id,type,amount,balance_after,note,user_id) VALUES(1,$1,$2,$3,$4,$5)',[type,amount,next,note,req.me.id]);
     await client.query('COMMIT');
     res.json({ok:true,balance:next});
-  }catch(e){
-    await client.query('ROLLBACK');
-    res.status(400).json({error:e.message});
-  }finally{client.release()}
+  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}
+  finally{client.release()}
+});
+`;
+
+// Replace the existing approval transaction so an approved purchase is also
+// paid from the Cassano vault atomically. If the vault is insufficient, the
+// order is NOT approved and stock is NOT deducted.
+const approveRoute=`
+app.post('/api/orders/:id/approve',auth,need('approve'),async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const o=(await client.query('SELECT * FROM orders WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+    if(!o||o.status!=='Pending')throw new Error('Pesanan sudah diproses');
+    const its=(await client.query('SELECT * FROM order_items WHERE order_id=$1',[o.id])).rows;
+    for(const x of its){
+      const i=(await client.query('SELECT * FROM items WHERE id=$1 FOR UPDATE',[x.item_id])).rows[0];
+      if(!i||i.stock<x.qty)throw new Error('Stok tidak cukup');
+    }
+    const vault=(await client.query('SELECT * FROM vault WHERE id=1 FOR UPDATE')).rows[0];
+    const balance=Number(vault?.balance||0),total=Number(o.total||0);
+    if(balance<total)throw new Error('Saldo brangkas tidak mencukupi untuk pembelian ini. Dibutuhkan Rp '+total.toLocaleString('id-ID')+', saldo Rp '+balance.toLocaleString('id-ID'));
+    for(const x of its){
+      await client.query('UPDATE items SET stock=stock-$1 WHERE id=$2',[x.qty,x.item_id]);
+      await client.query('INSERT INTO movements(item_id,type,qty,user_id,reference) VALUES($1,$2,$3,$4,$5)',[x.item_id,'OUT',x.qty,req.me.id,o.order_no]);
+    }
+    const next=balance-total;
+    await client.query('UPDATE vault SET balance=$1,updated_at=NOW() WHERE id=1',[next]);
+    await client.query('INSERT INTO vault_transactions(vault_id,type,amount,balance_after,note,user_id) VALUES(1,$2,$3,$4,$5,$6)',[1,'OUT',total,next,'Pembayaran '+o.order_no,req.me.id]);
+    await client.query("UPDATE orders SET status='Approved',approved_by=$1 WHERE id=$2",[req.me.id,o.id]);
+    await client.query('COMMIT');
+    res.json({ok:true,balance:next,paid:total});
+  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}
+  finally{client.release()}
 });
 `;
 
@@ -61,8 +87,16 @@ let patched=src;
 const initMarker='await pool.query(schema);';
 if(!patched.includes(initMarker))throw new Error('Database init marker not found');
 patched=patched.replace(initMarker,initMarker+'\n await pool.query(vaultSchema);');
-patched=patched.replace("app.get('*'",vaultRoutes+"app.get('*'");
-if(patched===src)throw new Error('Brangkas route injection failed');
+
+const approveStart="app.post('/api/orders/:id/approve'";
+const rejectStart="app.post('/api/orders/:id/reject'";
+const a=patched.indexOf(approveStart),b=patched.indexOf(rejectStart,a);
+if(a<0||b<0)throw new Error('Order approval route not found');
+patched=patched.slice(0,a)+approveRoute+patched.slice(b);
+
+const routeMarker="app.get('*'";
+if(patched.includes(routeMarker))patched=patched.replace(routeMarker,vaultRoutes+routeMarker);
+else patched+=vaultRoutes;
 
 const runtime=path.join(__dirname,'.server-runtime.js');
 fs.writeFileSync(runtime,patched,'utf8');
