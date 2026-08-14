@@ -50,9 +50,6 @@ app.post('/api/vault/adjust',auth,async(req,res)=>{
 });
 `;
 
-// Replace the existing approval transaction so an approved purchase is also
-// paid from the Cassano vault atomically. If the vault is insufficient, the
-// order is NOT approved and stock is NOT deducted.
 const approveRoute=`
 app.post('/api/orders/:id/approve',auth,need('approve'),async(req,res)=>{
   const client=await pool.connect();
@@ -86,7 +83,7 @@ app.post('/api/orders/:id/approve',auth,need('approve'),async(req,res)=>{
 let patched=src;
 const initMarker='await pool.query(schema);';
 if(!patched.includes(initMarker))throw new Error('Database init marker not found');
-patched=patched.replace(initMarker,initMarker+'\n await pool.query(vaultSchema);');
+patched=patched.replace(initMarker,initMarker+'\n await pool.query(vaultSchema);\n await pool.query(`INSERT INTO roles(name,description,permissions) VALUES(\'Capo\',\'Operasional lapangan\',\'["dashboard","items","cart","order","orders","history","stock"]\') ON CONFLICT(name) DO NOTHING`);');
 
 const approveStart="app.post('/api/orders/:id/approve'";
 const rejectStart="app.post('/api/orders/:id/reject'";
