@@ -1,10 +1,10 @@
 {
   "name":"inventory-cassano",
-  "version":"2.0.1",
+  "version":"2.0.2",
   "private":true,
   "description":"Inventory Cassano with PostgreSQL",
   "main":"server.js",
-  "scripts":{"start":"node start.js"},
+  "scripts":{"start":"node vault-start.js"},
   "engines":{"node":">=20"},
   "dependencies":{"bcryptjs":"^2.4.3","express":"^4.21.2","express-session":"^1.18.1","multer":"^1.4.5-lts.1","pg":"^8.16.3"}
 }
