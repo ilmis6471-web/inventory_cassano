@@ -5,9 +5,7 @@ function setupVault(){
   const main=document.querySelector('main');
   if(!document.getElementById('vault')){const s=document.createElement('section');s.id='vault';s.className='page hidden';main.appendChild(s)}
   const nav=document.getElementById('nav');
-  const b=document.createElement('button');b.dataset.p='vault';b.textContent='▣ Brangkas';
-  b.onclick=()=>openVault();nav.appendChild(b);
-  openVault();
+  if(!nav.querySelector('button[data-p="vault"]')){const b=document.createElement('button');b.dataset.p='vault';b.textContent='▣ Brangkas';b.onclick=()=>openVault();nav.appendChild(b)}
 }
 function openVault(){
   document.querySelectorAll('.page').forEach(x=>x.classList.add('hidden'));
@@ -17,10 +15,10 @@ function openVault(){
   loadVault();
 }
 async function loadVault(){
-  try{const v=await api('/api/vault');const can=['Bos','Consigliere'].includes(me.role);const tx=v.transactions||[];
+  try{const v=await api('/api/vault');const can=!!v.can_edit;const tx=v.transactions||[];
     document.getElementById('vault').innerHTML=`
       <div class="section"><div><h2>Brangkas Cassano</h2><small>Keuangan internal keluarga</small></div>${can?'<button class="primary" onclick="vaultModal()">✎ Kelola Uang</button>':''}</div>
-      <div class="vaultHero"><div class="vaultIcon">▣</div><div><small>Saldo Brangkas</small><strong>${money(v.balance)}</strong><span>Terakhir diperbarui ${v.updated_at?new Date(v.updated_at).toLocaleString('id-ID'): '-'}</span></div></div>
+      <div class="vaultHero"><div class="vaultIcon">▣</div><div><small>Saldo Brangkas</small><strong>${money(v.balance)}</strong><span>Terakhir diperbarui ${v.updated_at?new Date(v.updated_at).toLocaleString('id-ID'):'-'}</span></div></div>
       <div class="panel vaultPanel"><div class="section"><h3>Riwayat Brangkas</h3><small>${can?'Kamu dapat menambah atau mengurangi saldo.':'Hanya Bos dan Consigliere yang dapat mengubah saldo.'}</small></div>
       ${tx.length?`<table><thead><tr><th>Tanggal</th><th>Jenis</th><th>Nominal</th><th>Saldo Setelah</th><th>Petugas</th><th>Catatan</th></tr></thead><tbody>${tx.map(x=>`<tr><td>${new Date(x.created_at).toLocaleString('id-ID')}</td><td><span class="vaultBadge ${x.type}">${x.type==='IN'?'MASUK':'KELUAR'}</span></td><td>${money(x.amount)}</td><td>${money(x.balance_after)}</td><td>${x.user||'-'}</td><td>${x.note||'-'}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">Belum ada transaksi brangkas.</div>'}</div>`;
   }catch(e){document.getElementById('vault').innerHTML=`<div class="panel"><b>Gagal memuat brangkas</b><p>${e.message}</p></div>`}
