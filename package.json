@@ -4,7 +4,7 @@
   "private":true,
   "description":"Inventory Cassano with PostgreSQL",
   "main":"server.js",
-  "scripts":{"start":"node vault-start.js"},
+  "scripts":{"start":"node -e \"const fs=require('fs');const p='server.js';let s=fs.readFileSync(p,'utf8');s=s.replace(\\\"app.get('/api/categories',auth,async(req,res)=>res.json(await q('SELECT * FROM categories ORDER BY name'));\\\",\\\"app.get('/api/categories',auth,async(req,res)=>res.json(await q('SELECT * FROM categories ORDER BY name')));\\\");fs.writeFileSync(p,s,'utf8')\" && node vault-start.js"},
   "engines":{"node":">=20"},
   "dependencies":{"bcryptjs":"^2.4.3","express":"^4.21.2","express-session":"^1.18.1","multer":"^1.4.5-lts.1","pg":"^8.16.3"}
 }
