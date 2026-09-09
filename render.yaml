@@ -1,3 +1,4 @@
+# Render Blueprint: Neon is the external PostgreSQL database.
 services:
   - type: web
     name: inventory-cassano
