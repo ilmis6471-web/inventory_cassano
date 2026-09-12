@@ -1,7 +1,7 @@
 // Final UI patch: IDR totals + order receipts
 (function(){
   const esc=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
-  const money=n=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(n)||0);
+  const money=n=>new Intl.NumberFormat('id-ID',{style:'currency',currency:"USD",maximumFractionDigits:0}).format(Number(n)||0);
   const order=id=>(orders||[]).find(o=>Number(o.id)===Number(id));
   const payKey=id=>`cassano_payment_${id}`;
   const pay=o=>localStorage.getItem(payKey(o.id))||'CASH';
