@@ -1,6 +1,6 @@
 (()=>{
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
-const rupiah=n=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(n)||0);
+const rupiah=n=>new Intl.NumberFormat('id-ID',{style:'currency',currency:"USD",maximumFractionDigits:0}).format(Number(n)||0);
 const ago=v=>{const d=new Date(v),s=Math.max(0,(Date.now()-d)/1000);if(s<60)return'baru saja';if(s<3600)return Math.floor(s/60)+'m lalu';if(s<86400)return Math.floor(s/3600)+'j lalu';return Math.floor(s/86400)+'h lalu'};
 function css(){if($('cassanoCoreUi'))return;let s=document.createElement('style');s.id='cassanoCoreUi';s.textContent=`
 .me{margin-top:auto;padding:14px 4px 2px;border-top:1px solid #24262d;display:grid;gap:4px}.me #meName{display:block;color:#f4f4f5;font-size:13px;font-weight:800}.me #meRole{display:block;color:#ff3151;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1.4px;text-shadow:0 0 9px rgba(255,49,81,.35);margin-bottom:7px}.me #logout{width:100%;margin:0;border:1px solid #2b2e36;background:linear-gradient(180deg,#1b1d22,#14161a);color:#b8bdc7;border-radius:8px;padding:9px 11px;font-weight:700;text-align:left;box-shadow:none}.me #logout:hover{border-color:#4a2029;background:#22171b;color:#fff}
