@@ -1,5 +1,5 @@
 let me,items=[],cats=[],cart=[],orders=[],roles=[],users=[],perms=[];
-const $=x=>document.getElementById(x),money=n=>new Intl.NumberFormat("id-ID",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(n),toast=t=>{let x=$("toast");x.textContent=t;x.style.display="block";setTimeout(()=>x.style.display="none",2200)};
+const $=x=>document.getElementById(x),money=n=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(n),toast=t=>{let x=$("toast");x.textContent=t;x.style.display="block";setTimeout(()=>x.style.display="none",2200)};
 const navs=[["dashboard","⌂ Dashboard"],["items","▣ Barang"],["cart","🛒 Keranjang"],["orders","▤ Pesanan"],["history","◷ Riwayat"],["sales","▤ Penjualan"],["stock","↕ Stok"],["vault","▣ Brangkas"],["roles","♜ Role & Permission"],["users","♙ User"]];
 async function api(url,opt={}){let r=await fetch(url,{...opt,headers:opt.body instanceof FormData?opt.headers:{"Content-Type":"application/json",...(opt.headers||{})}});let d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||"Terjadi kesalahan");return d}
 async function init(){try{me=await api("/api/me");start()}catch{showLogin()}$("loginForm").onsubmit=login;$("logout").onclick=async()=>{await api("/api/logout",{method:"POST"});location.reload()}}
