@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS setoran_target_overrides(id SERIAL PRIMARY KEY,item_i
 CREATE TABLE IF NOT EXISTS setoran_transactions(id SERIAL PRIMARY KEY,campaign_id INTEGER NOT NULL REFERENCES setoran_campaigns(id) ON DELETE CASCADE,item_id INTEGER NOT NULL REFERENCES setoran_items(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,quantity NUMERIC(14,2) NOT NULL CHECK(quantity>0),note TEXT DEFAULT '',created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,created_at TIMESTAMPTZ DEFAULT NOW());
 CREATE INDEX IF NOT EXISTS idx_setoran_tx_campaign ON setoran_transactions(campaign_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_setoran_tx_member_item ON setoran_transactions(campaign_id,user_id,item_id);
+CREATE TABLE IF NOT EXISTS setoran_cash_transactions(id SERIAL PRIMARY KEY,campaign_id INTEGER NOT NULL REFERENCES setoran_campaigns(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,amount NUMERIC(16,2) NOT NULL CHECK(amount>0),note TEXT DEFAULT '',created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,kas_transaction_id INTEGER REFERENCES kas_transactions(id) ON DELETE SET NULL,created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS idx_setoran_cash_campaign ON setoran_cash_transactions(campaign_id,created_at DESC);
 `;
 async function q(sql,params=[]){return (await pool.query(sql,params)).rows}async function one(sql,params=[]){return (await pool.query(sql,params)).rows[0]}async function run(sql,params=[]){return pool.query(sql,params)}
 async function init(){await pool.query(schema);
@@ -112,6 +114,24 @@ app.post('/api/setoran/campaigns/:id/transactions',auth,async(req,res)=>{
   const uid=setoranManage(req)&&Number.isInteger(requestedUser)&&requestedUser>0?requestedUser:req.me.id;
   if(!(await one('SELECT id FROM setoran_members WHERE campaign_id=$1 AND user_id=$2',[cid,uid])))return res.status(403).json({error:'Member tersebut belum dimasukkan ke campaign'});
   await run('INSERT INTO setoran_transactions(campaign_id,item_id,user_id,quantity,note,created_by) VALUES($1,$2,$3,$4,$5,$6)',[cid,itemId,uid,qty,req.body?.note||'',req.me.id]);res.json({ok:true})
+});
+app.post('/api/setoran/campaigns/:id/cash',auth,async(req,res)=>{
+  if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
+  const cid=Number(req.params.id),amount=Number(req.body?.amount),requestedUser=Number(req.body?.user_id),note=String(req.body?.note||'').trim();
+  if(!Number.isInteger(cid)||cid<=0||!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Nominal Setoran Kas tidak valid'});
+  const c=await one('SELECT * FROM setoran_campaigns WHERE id=$1',[cid]);if(!c)return res.status(404).json({error:'Campaign tidak ditemukan'});
+  const today=await one("SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::date AS d");if(today.d<c.start_date||today.d>c.end_date)return res.status(400).json({error:'Campaign sedang tidak aktif pada tanggal ini'});
+  const uid=setoranManage(req)&&Number.isInteger(requestedUser)&&requestedUser>0?requestedUser:req.me.id;
+  if(!(await one('SELECT id FROM setoran_members WHERE campaign_id=$1 AND user_id=$2',[cid,uid])))return res.status(403).json({error:'Member tersebut belum dimasukkan ke campaign'});
+  const client=await pool.connect();try{await client.query('BEGIN');
+    let k=(await client.query('SELECT * FROM kas WHERE id=1 FOR UPDATE')).rows[0];
+    if(!k)k=(await client.query('INSERT INTO kas(id,balance) VALUES(1,0) RETURNING *')).rows[0];
+    const next=Number(k.balance||0)+amount;
+    await client.query('UPDATE kas SET balance=$1,updated_at=NOW() WHERE id=1',[next]);
+    const kt=(await client.query("INSERT INTO kas_transactions(type,amount,balance_after,user_id,category,note) VALUES('IN',$1,$2,$3,'Setoran Kas',$4) RETURNING id",[amount,next,req.me.id,note])).rows[0];
+    await client.query('INSERT INTO setoran_cash_transactions(campaign_id,user_id,amount,note,created_by,kas_transaction_id) VALUES($1,$2,$3,$4,$5,$6)',[cid,uid,amount,note,req.me.id,kt.id]);
+    await client.query('COMMIT');res.json({ok:true,balance:next});
+  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}
 });
 app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
   try{
