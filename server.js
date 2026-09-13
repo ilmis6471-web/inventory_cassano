@@ -114,7 +114,7 @@ app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
     const wb=new ExcelJS.Workbook();wb.creator='Inventory Cassano';wb.created=new Date();wb.modified=new Date();
     const red='FF8B1E2D',dark='FF111111',light='FFF3F3F3',green='FFC6EFCE',yellow='FFFFEB9C',gray='FFE7E6E6',white='FFFFFFFF';
     const border={top:{style:'thin',color:{argb:'FFB7B7B7'}},left:{style:'thin',color:{argb:'FFB7B7B7'}},bottom:{style:'thin',color:{argb:'FFB7B7B7'}},right:{style:'thin',color:{argb:'FFB7B7B7'}}};
-    const fmtDate=v=>{const x=String(v||'').slice(0,10);if(/^\\d{4}-\\d{2}-\\d{2}$/.test(x)){const [y,m,dd]=x.split('-');return dd+'/'+m+'/'+y}return x||'-'};
+    const fmtDate=v=>{const x=String(v||'').slice(0,10);if(/^\d{4}-\d{2}-\d{2}$/.test(x)){const [y,m,dd]=x.split('-');return dd+'/'+m+'/'+y}return x||'-'};
     const freq=({DAILY:'Harian',WEEKLY:'Mingguan',MONTHLY:'Bulanan'})[c.frequency]||c.frequency||'-';
     const ov=(itemId,userId)=>{const x=ovs.find(o=>Number(o.item_id)===Number(itemId)&&Number(o.user_id)===Number(userId));return x?Number(x.target):null};
     const target=(it,userId)=>it.target_mode==='SHARED'?Number(it.target||0):Number(ov(it.id,userId)??it.target??0);
