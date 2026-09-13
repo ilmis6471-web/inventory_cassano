@@ -4,10 +4,11 @@ const bcrypt=require('bcryptjs');
 const session=require('express-session');
 const multer=require('multer');
 const {Pool}=require('pg');
+const XLSX=require('xlsx');
 const app=express();app.set('trust proxy',1);const PORT=process.env.PORT||3000;
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:false,max:5});
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024}});
-const perms=["dashboard","items","items_manage","cart","order","orders","approve","history","stock","roles","users","roles_manage"];
+const perms=["dashboard","items","items_manage","cart","order","orders","approve","history","stock","roles","users","roles_manage","setoran","setoran_manage"];
 const schema=`
 CREATE TABLE IF NOT EXISTS roles(id SERIAL PRIMARY KEY,name TEXT UNIQUE NOT NULL,description TEXT DEFAULT '',permissions JSONB NOT NULL DEFAULT '[]');
 CREATE TABLE IF NOT EXISTS users(id SERIAL PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password TEXT NOT NULL,role_id INTEGER REFERENCES roles(id),active BOOLEAN NOT NULL DEFAULT TRUE);
@@ -19,6 +20,13 @@ CREATE TABLE IF NOT EXISTS order_items(id SERIAL PRIMARY KEY,order_id INTEGER RE
 CREATE TABLE IF NOT EXISTS movements(id SERIAL PRIMARY KEY,item_id INTEGER REFERENCES items(id),type TEXT NOT NULL,qty INTEGER NOT NULL,user_id INTEGER REFERENCES users(id),reference TEXT,note TEXT,created_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS vault(id INTEGER PRIMARY KEY DEFAULT 1,balance NUMERIC(16,2) NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS vault_transactions(id SERIAL PRIMARY KEY,type TEXT NOT NULL CHECK(type IN ('IN','OUT')),amount NUMERIC(16,2) NOT NULL CHECK(amount>0),balance_after NUMERIC(16,2) NOT NULL,user_id INTEGER REFERENCES users(id),note TEXT DEFAULT '',created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS setoran_campaigns(id SERIAL PRIMARY KEY,name TEXT NOT NULL,frequency TEXT NOT NULL CHECK(frequency IN ('DAILY','WEEKLY','MONTHLY')),start_date DATE NOT NULL,end_date DATE NOT NULL,notes TEXT DEFAULT '',created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,created_at TIMESTAMPTZ DEFAULT NOW(),active BOOLEAN NOT NULL DEFAULT TRUE);
+CREATE TABLE IF NOT EXISTS setoran_items(id SERIAL PRIMARY KEY,campaign_id INTEGER NOT NULL REFERENCES setoran_campaigns(id) ON DELETE CASCADE,name TEXT NOT NULL,target NUMERIC(14,2) NOT NULL DEFAULT 0,target_mode TEXT NOT NULL DEFAULT 'SHARED' CHECK(target_mode IN ('SHARED','PER_MEMBER')),sort_order INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS setoran_members(id SERIAL PRIMARY KEY,campaign_id INTEGER NOT NULL REFERENCES setoran_campaigns(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,UNIQUE(campaign_id,user_id));
+CREATE TABLE IF NOT EXISTS setoran_target_overrides(id SERIAL PRIMARY KEY,item_id INTEGER NOT NULL REFERENCES setoran_items(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,target NUMERIC(14,2) NOT NULL,UNIQUE(item_id,user_id));
+CREATE TABLE IF NOT EXISTS setoran_transactions(id SERIAL PRIMARY KEY,campaign_id INTEGER NOT NULL REFERENCES setoran_campaigns(id) ON DELETE CASCADE,item_id INTEGER NOT NULL REFERENCES setoran_items(id) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,quantity NUMERIC(14,2) NOT NULL CHECK(quantity>0),note TEXT DEFAULT '',created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,created_at TIMESTAMPTZ DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS idx_setoran_tx_campaign ON setoran_transactions(campaign_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_setoran_tx_member_item ON setoran_transactions(campaign_id,user_id,item_id);
 `;
 async function q(sql,params=[]){return (await pool.query(sql,params)).rows}async function one(sql,params=[]){return (await pool.query(sql,params)).rows[0]}async function run(sql,params=[]){return pool.query(sql,params)}
 async function init(){await pool.query(schema);
@@ -26,6 +34,10 @@ if(!(await one('SELECT id FROM roles LIMIT 1'))){for(const [name,description,per
 for(const x of ["Dokumen","Elektronik","Akses","Operasional"])await run('INSERT INTO categories(name) VALUES($1) ON CONFLICT(name) DO NOTHING',[x]);
 if(!(await one('SELECT id FROM users LIMIT 1'))){const bos=(await one("SELECT id FROM roles WHERE name='Bos'"))?.id;await run('INSERT INTO users(name,email,password,role_id) VALUES($1,$2,$3,$4)',["Bos Cassano","bos@cassano.local",bcrypt.hashSync("bos123",10),bos]);const cat=(await one("SELECT id FROM categories WHERE name='Dokumen'"))?.id;await run('INSERT INTO items(code,name,category_id,price,stock,description) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(code) DO NOTHING',["BRG-001","Dokumen Kontrak",cat,150000,12,"Dokumen operasional"])}
 await run('INSERT INTO vault(id,balance) VALUES(1,0) ON CONFLICT(id) DO NOTHING');
+const bosRole=await one("SELECT id FROM roles WHERE name='Bos'");
+if(bosRole)await run("UPDATE roles SET permissions=(SELECT jsonb_agg(DISTINCT x) FROM jsonb_array_elements_text(permissions) x UNION SELECT 'setoran' UNION SELECT 'setoran_manage') WHERE id=$1",[bosRole.id]);
+const conRole=await one("SELECT id FROM roles WHERE name='Consigliere'");
+if(conRole)await run("UPDATE roles SET permissions=(SELECT jsonb_agg(DISTINCT x) FROM jsonb_array_elements_text(permissions) x UNION SELECT 'setoran' UNION SELECT 'setoran_manage') WHERE id=$1",[conRole.id]);
 await run(`UPDATE items i SET stock=x.net_stock FROM (SELECT item_id,SUM(CASE WHEN type='IN' THEN qty WHEN type='OUT' THEN -qty ELSE 0 END)::int net_stock FROM movements GROUP BY item_id) x WHERE i.id=x.item_id AND i.stock=0 AND x.net_stock>0`);
 }
 app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));app.use(session({secret:process.env.SESSION_SECRET||'CHANGE_ME',resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production'}}));app.use(express.static(__dirname));
@@ -48,5 +60,66 @@ app.get('/api/users',auth,need('users'),async(req,res)=>res.json(await q('SELECT
 app.delete('/api/users/:id',auth,need('users'),async(req,res)=>{const id=Number(req.params.id);if(!Number.isInteger(id))return res.status(400).json({error:'ID user tidak valid'});if(id===req.me.id)return res.status(400).json({error:'Tidak dapat menghapus akun yang sedang digunakan'});const client=await pool.connect();try{await client.query('BEGIN');const u=(await client.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[id])).rows[0];if(!u)throw new Error('User tidak ditemukan');await client.query('DELETE FROM cart WHERE user_id=$1',[id]);await client.query('UPDATE orders SET user_id=NULL WHERE user_id=$1',[id]);await client.query('UPDATE orders SET approved_by=NULL WHERE approved_by=$1',[id]);await client.query('UPDATE movements SET user_id=NULL WHERE user_id=$1',[id]);await client.query('UPDATE vault_transactions SET user_id=NULL WHERE user_id=$1',[id]);await client.query('DELETE FROM users WHERE id=$1',[id]);await client.query('COMMIT');res.json({ok:true})}catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}});
 app.get('/api/vault',auth,async(req,res)=>{const v=await one('SELECT * FROM vault WHERE id=1');const tx=await q('SELECT t.*,u.name user FROM vault_transactions t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 100');res.json({balance:v?.balance||0,updated_at:v?.updated_at||null,can_edit:vaultCanEdit(req),transactions:tx})});
 app.post('/api/vault/adjust',auth,async(req,res)=>{if(!vaultCanEdit(req))return res.status(403).json({error:'Hanya Bos dan Consigliere yang dapat mengubah brangkas'});const type=req.body.type,amount=Number(req.body.amount);if(!['IN','OUT'].includes(type)||!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Transaksi tidak valid'});const client=await pool.connect();try{await client.query('BEGIN');const v=(await client.query('SELECT * FROM vault WHERE id=1 FOR UPDATE')).rows[0];const current=Number(v?.balance||0),next=type==='IN'?current+amount:current-amount;if(next<0)throw new Error('Saldo brangkas tidak mencukupi');const nv=(await client.query('UPDATE vault SET balance=$1,updated_at=NOW() WHERE id=1 RETURNING *',[next])).rows[0];await client.query('INSERT INTO vault_transactions(type,amount,balance_after,user_id,note) VALUES($1,$2,$3,$4,$5)',[type,amount,next,req.me.id,req.body.note||'']);await client.query('COMMIT');res.json({ok:true,balance:nv.balance})}catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}});
+
+function setoranManage(req){return has(req.me,'setoran_manage')}
+function setoranAccess(req){return has(req.me,'setoran')||setoranManage(req)}
+function setoranDateOk(c){const now=new Date();const start=new Date(c.start_date+'T00:00:00');const end=new Date(c.end_date+'T23:59:59');return now>=start&&now<=end}
+async function setoranDetail(id){
+  const c=await one('SELECT c.*,u.name creator FROM setoran_campaigns c LEFT JOIN users u ON u.id=c.created_by WHERE c.id=$1',[id]);
+  if(!c)return null;
+  const members=await q('SELECT sm.user_id,u.name,u.email FROM setoran_members sm JOIN users u ON u.id=sm.user_id WHERE sm.campaign_id=$1 ORDER BY u.name',[id]);
+  const items=await q('SELECT * FROM setoran_items WHERE campaign_id=$1 ORDER BY sort_order,id',[id]);
+  const overrides=await q('SELECT sto.item_id,sto.user_id,sto.target FROM setoran_target_overrides sto JOIN setoran_items si ON si.id=sto.item_id WHERE si.campaign_id=$1',[id]);
+  const tx=await q('SELECT t.*,u.name user,cb.name created_by_name,si.name item_name FROM setoran_transactions t JOIN users u ON u.id=t.user_id JOIN setoran_items si ON si.id=t.item_id LEFT JOIN users cb ON cb.id=t.created_by WHERE t.campaign_id=$1 ORDER BY t.created_at DESC,t.id DESC',[id]);
+  return {campaign:c,members,items,overrides,transactions:tx};
+}
+app.get('/api/setoran/campaigns',auth,async(req,res)=>{if(!setoranAccess(req))return res.status(403).json({error:'Role tidak memiliki akses Setoran'});res.json(await q('SELECT c.*,u.name creator,(SELECT COUNT(*)::int FROM setoran_members sm WHERE sm.campaign_id=c.id) member_count,(SELECT COUNT(*)::int FROM setoran_items si WHERE si.campaign_id=c.id) item_count FROM setoran_campaigns c LEFT JOIN users u ON u.id=c.created_by ORDER BY c.start_date DESC,c.id DESC'))});
+app.get('/api/setoran/campaigns/:id',auth,async(req,res)=>{if(!setoranAccess(req))return res.status(403).json({error:'Role tidak memiliki akses Setoran'});const d=await setoranDetail(req.params.id);if(!d)return res.status(404).json({error:'Campaign tidak ditemukan'});res.json(d)});
+app.post('/api/setoran/campaigns',auth,async(req,res)=>{
+  if(!setoranManage(req))return res.status(403).json({error:'Hanya role yang memiliki permission setoran_manage yang dapat membuat campaign'});
+  const b=req.body||{},members=Array.isArray(b.members)?[...new Set(b.members.map(Number).filter(Number.isInteger))]:[],items=Array.isArray(b.items)?b.items:[];
+  if(!b.name||!['DAILY','WEEKLY','MONTHLY'].includes(b.frequency)||!b.start_date||!b.end_date||new Date(b.start_date)>new Date(b.end_date))return res.status(400).json({error:'Data campaign tidak valid'});
+  if(!members.length)return res.status(400).json({error:'Pilih minimal satu member'});
+  if(!items.length)return res.status(400).json({error:'Tambahkan minimal satu barang setoran'});
+  const client=await pool.connect();try{await client.query('BEGIN');
+    const c=(await client.query('INSERT INTO setoran_campaigns(name,frequency,start_date,end_date,notes,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id',[b.name,b.frequency,b.start_date,b.end_date,b.notes||'',req.me.id])).rows[0];
+    for(const uid of members){if(!(await client.query('SELECT id FROM users WHERE id=$1',[uid])).rows[0])throw new Error('Member tidak ditemukan: '+uid);await client.query('INSERT INTO setoran_members(campaign_id,user_id) VALUES($1,$2)',[c.id,uid])}
+    let order=0;for(const it of items){const target=Number(it.target);if(!it.name||!Number.isFinite(target)||target<0||!['SHARED','PER_MEMBER'].includes(it.target_mode))throw new Error('Barang setoran tidak valid');await client.query('INSERT INTO setoran_items(campaign_id,name,target,target_mode,sort_order) VALUES($1,$2,$3,$4,$5)',[c.id,String(it.name).trim(),target,it.target_mode,order++])}
+    await client.query('COMMIT');res.json({ok:true,id:c.id});
+  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}
+});
+app.put('/api/setoran/campaigns/:id',auth,async(req,res)=>{if(!setoranManage(req))return res.status(403).json({error:'Tidak memiliki permission setoran_manage'});const b=req.body||{};if(!b.name||!['DAILY','WEEKLY','MONTHLY'].includes(b.frequency)||!b.start_date||!b.end_date)return res.status(400).json({error:'Data campaign tidak valid'});await run('UPDATE setoran_campaigns SET name=$1,frequency=$2,start_date=$3,end_date=$4,notes=$5,active=$6 WHERE id=$7',[b.name,b.frequency,b.start_date,b.end_date,b.notes||'',b.active!==false,req.params.id]);res.json({ok:true})});
+app.put('/api/setoran/items/:id',auth,async(req,res)=>{if(!setoranManage(req))return res.status(403).json({error:'Tidak memiliki permission setoran_manage'});const b=req.body||{},target=Number(b.target);if(!b.name||!Number.isFinite(target)||target<0||!['SHARED','PER_MEMBER'].includes(b.target_mode))return res.status(400).json({error:'Data target tidak valid'});await run('UPDATE setoran_items SET name=$1,target=$2,target_mode=$3 WHERE id=$4',[String(b.name).trim(),target,b.target_mode,req.params.id]);res.json({ok:true})});
+app.put('/api/setoran/items/:id/target/:userId',auth,async(req,res)=>{if(!setoranManage(req))return res.status(403).json({error:'Tidak memiliki permission setoran_manage'});const target=Number(req.body?.target);if(!Number.isFinite(target)||target<0)return res.status(400).json({error:'Target tidak valid'});await run('INSERT INTO setoran_target_overrides(item_id,user_id,target) VALUES($1,$2,$3) ON CONFLICT(item_id,user_id) DO UPDATE SET target=EXCLUDED.target',[req.params.id,req.params.userId,target]);res.json({ok:true})});
+app.post('/api/setoran/campaigns/:id/transactions',auth,async(req,res)=>{
+  if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
+  const cid=Number(req.params.id),itemId=Number(req.body?.item_id),qty=Number(req.body?.quantity),requestedUser=Number(req.body?.user_id);
+  if(!Number.isInteger(cid)||!Number.isInteger(itemId)||!Number.isFinite(qty)||qty<=0)return res.status(400).json({error:'Data setoran tidak valid'});
+  const c=await one('SELECT * FROM setoran_campaigns WHERE id=$1',[cid]);if(!c)return res.status(404).json({error:'Campaign tidak ditemukan'});
+  if(!setoranDateOk(c))return res.status(400).json({error:'Campaign sedang tidak aktif pada tanggal ini'});
+  const item=await one('SELECT * FROM setoran_items WHERE id=$1 AND campaign_id=$2',[itemId,cid]);if(!item)return res.status(404).json({error:'Jenis setoran tidak ditemukan'});
+  const uid=setoranManage(req)&&Number.isInteger(requestedUser)?requestedUser:req.me.id;
+  if(!(await one('SELECT id FROM setoran_members WHERE campaign_id=$1 AND user_id=$2',[cid,uid])))return res.status(403).json({error:'Member tersebut belum dimasukkan ke campaign'});
+  await run('INSERT INTO setoran_transactions(campaign_id,item_id,user_id,quantity,note,created_by) VALUES($1,$2,$3,$4,$5,$6)',[cid,itemId,uid,qty,req.body?.note||'',req.me.id]);res.json({ok:true})
+});
+app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
+  if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
+  const d=await setoranDetail(req.params.id);if(!d)return res.status(404).json({error:'Campaign tidak ditemukan'});
+  const {campaign:c,members,items,overrides,transactions}=d, ov=(itemId,userId)=>{const x=overrides.find(o=>Number(o.item_id)===Number(itemId)&&Number(o.user_id)===Number(userId));return x?Number(x.target):null};
+  const totalFor=(itemId,userId)=>transactions.filter(t=>Number(t.item_id)===Number(itemId)&&Number(t.user_id)===Number(userId)).reduce((a,t)=>a+Number(t.quantity||0),0);
+  const sharedTotal=itemId=>transactions.filter(t=>Number(t.item_id)===Number(itemId)).reduce((a,t)=>a+Number(t.quantity||0),0);
+  const targetFor=(item,userId)=>item.target_mode==='SHARED'?Number(item.target):Number(ov(item.id,userId)??item.target);
+  const rows=[['DATA SETORAN',c.name],['Periode',c.start_date+' s/d '+c.end_date],['Frekuensi',({DAILY:'Harian',WEEKLY:'Mingguan',MONTHLY:'Bulanan'})[c.frequency]],[''],['No','Nama',...items.map(i=>i.name),'Status']];
+  members.forEach((m,i)=>{const vals=items.map(it=>totalFor(it.id,m.user_id));const statuses=items.map((it,j)=>{const val=it.target_mode==='SHARED'?sharedTotal(it.id):vals[j];const tar=targetFor(it,m.user_id);return val<=0?'Belum Ada Setoran':val>=tar?'Target Tercapai':'Target Belum Tercapai'});rows.push([i+1,m.name,...vals,statuses.every(x=>x==='Target Tercapai')?'Target Tercapai':statuses.every(x=>x==='Belum Ada Setoran')?'Belum Ada Setoran':'Target Belum Tercapai'])});
+  rows.push(['','TOTAL',...items.map(it=>sharedTotal(it.id)),'']);
+  const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:6},{wch:28},...items.map(()=>({wch:18})),{wch:24}];
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Setoran');
+  const detailRows=[['Tanggal','Nama','Barang','Jumlah','Catatan','Dicatat Oleh'],...transactions.map(t=>[new Date(t.created_at),t.user,t.item_name,Number(t.quantity),t.note||'',t.created_by_name||'-'])];
+  const ws2=XLSX.utils.aoa_to_sheet(detailRows);ws2['!cols']=[{wch:22},{wch:24},{wch:20},{wch:12},{wch:30},{wch:24}];XLSX.utils.book_append_sheet(wb,ws2,'Riwayat Setoran');
+  const buf=XLSX.write(wb,{type:'buffer',bookType:'xlsx',cellStyles:true,compression:true});
+  const safe=String(c.name).replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,60)||'campaign';
+  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition','attachment; filename="Setoran-'+safe+'.xlsx"');res.end(buf);
+});
+
 app.get('/api/dashboard',auth,async(req,res)=>res.json({items:(await one('SELECT COUNT(*)::int n FROM items')).n,stock:(await one('SELECT COALESCE(SUM(stock),0)::int n FROM items')).n,pending:(await one("SELECT COUNT(*)::int n FROM orders WHERE status='Pending'")).n,approved:(await one("SELECT COUNT(*)::int n FROM orders WHERE status='Approved'")).n}));
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'index.html')));init().then(()=>app.listen(PORT,()=>console.log('Inventory Cassano running on port '+PORT))).catch(e=>{console.error(e);process.exit(1)});
