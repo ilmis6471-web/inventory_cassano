@@ -128,7 +128,7 @@ app.post('/api/setoran/campaigns/:id/cash',auth,async(req,res)=>{
     if(!k)k=(await client.query('INSERT INTO kas(id,balance) VALUES(1,0) RETURNING *')).rows[0];
     const next=Number(k.balance||0)+amount;
     await client.query('UPDATE kas SET balance=$1,updated_at=NOW() WHERE id=1',[next]);
-    const kt=(await client.query("INSERT INTO kas_transactions(type,amount,balance_after,user_id,category,note) VALUES('IN',$1,$2,$3,'Setoran Kas',$4) RETURNING id",[amount,next,req.me.id,note])).rows[0];
+    const kt=(await client.query("INSERT INTO kas_transactions(type,amount,balance_after,user_id,category,note) VALUES('IN',$1,$2,$3,'Setoran Kas',$4) RETURNING id",[amount,next,uid,note])).rows[0];
     await client.query('INSERT INTO setoran_cash_transactions(campaign_id,user_id,amount,note,created_by,kas_transaction_id) VALUES($1,$2,$3,$4,$5,$6)',[cid,uid,amount,note,req.me.id,kt.id]);
     await client.query('COMMIT');res.json({ok:true,balance:next});
   }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}
