@@ -97,7 +97,7 @@ app.post('/api/setoran/campaigns/:id/transactions',auth,async(req,res)=>{
   const cid=Number(req.params.id),itemId=Number(req.body?.item_id),qty=Number(req.body?.quantity),requestedUser=Number(req.body?.user_id);
   if(!Number.isInteger(cid)||cid<=0||!Number.isInteger(itemId)||itemId<=0||!Number.isFinite(qty)||qty<=0)return res.status(400).json({error:'Data setoran tidak valid'});
   const c=await one('SELECT * FROM setoran_campaigns WHERE id=$1',[cid]);if(!c)return res.status(404).json({error:'Campaign tidak ditemukan'});
-  if(!setoranDateOk(c))return res.status(400).json({error:'Campaign sedang tidak aktif pada tanggal ini'});
+  const today=await one("SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Jakarta')::date AS d");if(today.d<c.start_date||today.d>c.end_date)return res.status(400).json({error:'Campaign sedang tidak aktif pada tanggal ini'});
   const item=await one('SELECT * FROM setoran_items WHERE id=$1 AND campaign_id=$2',[itemId,cid]);if(!item)return res.status(404).json({error:'Jenis setoran tidak ditemukan'});
   const uid=setoranManage(req)&&Number.isInteger(requestedUser)&&requestedUser>0?requestedUser:req.me.id;
   if(!(await one('SELECT id FROM setoran_members WHERE campaign_id=$1 AND user_id=$2',[cid,uid])))return res.status(403).json({error:'Member tersebut belum dimasukkan ke campaign'});
