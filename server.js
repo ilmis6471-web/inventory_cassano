@@ -63,7 +63,7 @@ app.post('/api/vault/adjust',auth,async(req,res)=>{if(!vaultCanEdit(req))return 
 
 function setoranManage(req){return has(req.me,'setoran_manage')}
 function setoranAccess(req){return has(req.me,'setoran')||setoranManage(req)}
-function setoranDateOk(c){const now=new Date();const jakarta=new Date(now.getTime()+7*60*60*1000);const today=jakarta.toISOString().slice(0,10);const iso=v=>String(v).slice(0,10);return c.active!==false&&today>=iso(c.start_date)&&today<=iso(c.end_date)}
+function setoranDateOk(c){const now=new Date();const jakarta=new Date(now.getTime()+7*60*60*1000);const today=jakarta.toISOString().slice(0,10);const iso=v=>String(v).slice(0,10);return today>=iso(c.start_date)&&today<=iso(c.end_date)}
 async function setoranDetail(id){
   const c=await one('SELECT c.*,u.name creator FROM setoran_campaigns c LEFT JOIN users u ON u.id=c.created_by WHERE c.id=$1',[id]);
   if(!c)return null;
