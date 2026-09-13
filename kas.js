@@ -1,5 +1,4 @@
 let kasState=null,kasFilter={q:'',type:'ALL',category:'ALL'};
-let kasState=null;
 async function loadKas(){
  const el=document.getElementById('kas');if(!el)return;
  try{
