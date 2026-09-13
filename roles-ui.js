@@ -1,6 +1,6 @@
 // Cassano Role & Permission UI
 (function(){
-  const labels={dashboard:'Dashboard',items:'Lihat Barang',items_manage:'Kelola Barang',cart:'Keranjang',order:'Buat Pesanan',orders:'Lihat Semua Pesanan',approve:'Approval Pesanan',history:'Riwayat',stock:'Kelola Stok',roles:'Lihat Role',users:'Kelola User',roles_manage:'Kelola Role & Permission'};
+  const labels={dashboard:'Dashboard',items:'Lihat Barang',items_manage:'Kelola Barang',cart:'Keranjang',order:'Buat Pesanan',orders:'Lihat Semua Pesanan',approve:'Approval Pesanan',history:'Riwayat',stock:'Kelola Stok',setoran:'Lihat Setoran',setoran_manage:'Kelola Campaign Setoran',roles:'Lihat Role',users:'Kelola User',roles_manage:'Kelola Role & Permission'};
   window.roleModal=function(id){
     const r=id?roles.find(x=>Number(x.id)===Number(id)):null;
     const selected= r ? (Array.isArray(r.permissions)?r.permissions:JSON.parse(r.permissions||'[]')) : [];
