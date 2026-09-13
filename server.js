@@ -122,7 +122,7 @@ app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
     const allProgress=itemId=>tx.filter(t=>Number(t.item_id)===Number(itemId)).reduce((n,t)=>n+Number(t.quantity||0),0);
     const status=(it,userId)=>{const p=progress(it.id,userId),tar=target(it,userId);return p<=0?'Belum Ada Setoran':p>=tar?'Target Tercapai':'Target Belum Tercapai'};
     const logoDataPath=path.join(__dirname,'logo_b64.txt');let logoId=null;
-    try{if(fs.existsSync(logoDataPath)){const logoBase64=fs.readFileSync(logoDataPath,'utf8').trim();if(logoBase64)logoId=wb.addImage({base64:logoBase64,extension:'jpeg'})}}catch(e){console.warn('SETORAN_LOGO_SKIP',e.message)}
+    try{if(fs.existsSync(logoDataPath)){const logoBase64=fs.readFileSync(logoDataPath,'utf8').trim();if(logoBase64)logoId=wb.addImage({base64:'data:image/jpeg;base64,'+logoBase64,extension:'jpeg'})}}catch(e){console.warn('SETORAN_LOGO_SKIP',e.message)}
     const addLogo=(ws,range)=>{if(logoId!==null)ws.addImage(logoId,range)};
     const ws=wb.addWorksheet('Setoran',{views:[{state:'frozen',ySplit:8}]});
     const n=items.length, tableLast=2+n+1, sumName=tableLast+2, sumTarget=sumName+1, sumProgress=sumName+2, lastCol=Math.max(tableLast,sumProgress);
