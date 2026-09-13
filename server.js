@@ -35,9 +35,9 @@ for(const x of ["Dokumen","Elektronik","Akses","Operasional"])await run('INSERT 
 if(!(await one('SELECT id FROM users LIMIT 1'))){const bos=(await one("SELECT id FROM roles WHERE name='Bos'"))?.id;await run('INSERT INTO users(name,email,password,role_id) VALUES($1,$2,$3,$4)',["Bos Cassano","bos@cassano.local",bcrypt.hashSync("bos123",10),bos]);const cat=(await one("SELECT id FROM categories WHERE name='Dokumen'"))?.id;await run('INSERT INTO items(code,name,category_id,price,stock,description) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(code) DO NOTHING',["BRG-001","Dokumen Kontrak",cat,150000,12,"Dokumen operasional"])}
 await run('INSERT INTO vault(id,balance) VALUES(1,0) ON CONFLICT(id) DO NOTHING');
 const bosRole=await one("SELECT id FROM roles WHERE name='Bos'");
-if(bosRole)await run("UPDATE roles SET permissions=(SELECT jsonb_agg(DISTINCT x) FROM jsonb_array_elements_text(permissions) x UNION SELECT 'setoran' UNION SELECT 'setoran_manage') WHERE id=$1",[bosRole.id]);
+if(bosRole)await run("UPDATE roles SET permissions=permissions || '[\"setoran\",\"setoran_manage\"]'::jsonb WHERE id=$1",[bosRole.id]);
 const conRole=await one("SELECT id FROM roles WHERE name='Consigliere'");
-if(conRole)await run("UPDATE roles SET permissions=(SELECT jsonb_agg(DISTINCT x) FROM jsonb_array_elements_text(permissions) x UNION SELECT 'setoran' UNION SELECT 'setoran_manage') WHERE id=$1",[conRole.id]);
+if(conRole)await run("UPDATE roles SET permissions=permissions || '[\"setoran\",\"setoran_manage\"]'::jsonb WHERE id=$1",[conRole.id]);
 await run(`UPDATE items i SET stock=x.net_stock FROM (SELECT item_id,SUM(CASE WHEN type='IN' THEN qty WHEN type='OUT' THEN -qty ELSE 0 END)::int net_stock FROM movements GROUP BY item_id) x WHERE i.id=x.item_id AND i.stock=0 AND x.net_stock>0`);
 }
 app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));app.use(session({secret:process.env.SESSION_SECRET||'CHANGE_ME',resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production'}}));app.use(express.static(__dirname));
