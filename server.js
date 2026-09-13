@@ -1,6 +1,7 @@
 // Setoran export branding + WIB campaign checks
 const express=require('express');
 const path=require('path');
+const fs=require('fs');
 const bcrypt=require('bcryptjs');
 const session=require('express-session');
 const multer=require('multer');
@@ -108,34 +109,57 @@ app.post('/api/setoran/campaigns/:id/transactions',auth,async(req,res)=>{
 app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
   try{
     if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
-    const d=await setoranDetail(req.params.id); if(!d)return res.status(404).json({error:'Campaign tidak ditemukan'});
-    const {campaign:c}=d,tx=Array.isArray(d.transactions)?d.transactions:[],its=Array.isArray(d.items)?d.items:[],mem=Array.isArray(d.members)?d.members:[],ovs=Array.isArray(d.overrides)?d.overrides:[];
-    const ov=(itemId,userId)=>{const x=ovs.find(o=>Number(o.item_id)===Number(itemId)&&Number(o.user_id)===Number(userId));return x?Number(x.target):null};
-    const totalFor=(itemId,userId)=>tx.filter(t=>Number(t.item_id)===Number(itemId)&&Number(t.user_id)===Number(userId)).reduce((a,t)=>a+Number(t.quantity||0),0);
-    const sharedTotal=itemId=>tx.filter(t=>Number(t.item_id)===Number(itemId)).reduce((a,t)=>a+Number(t.quantity||0),0);
-    const targetFor=(item,userId)=>item.target_mode==='SHARED'?Number(item.target):Number(ov(item.id,userId)??item.target);
-    const fmtDate=v=>{const x=String(v||'').slice(0,10);if(/^\d{4}-\d{2}-\d{2}$/.test(x)){const [y,m,dd]=x.split('-');return dd+'/'+m+'/'+y}return x||'-'};
+    const d=await setoranDetail(req.params.id);if(!d)return res.status(404).json({error:'Campaign tidak ditemukan'});
+    const {campaign:c}=d,tx=Array.isArray(d.transactions)?d.transactions:[],items=Array.isArray(d.items)?d.items:[],members=Array.isArray(d.members)?d.members:[],ovs=Array.isArray(d.overrides)?d.overrides:[];
     const wb=new ExcelJS.Workbook();wb.creator='Inventory Cassano';wb.created=new Date();wb.modified=new Date();
-    const colLetter=n=>{let x=n,r='';while(x){const m=(x-1)%26;r=String.fromCharCode(65+m)+r;x=Math.floor((x-1)/26)}return r};
-    const dataLast=2+its.length+1, summaryStart=dataLast+2, lastCol=Math.max(dataLast+2,summaryStart+1), titleEnd=colLetter(lastCol);
+    const red='FF8B1E2D',dark='FF111111',light='FFF3F3F3',green='FFC6EFCE',yellow='FFFFEB9C',gray='FFE7E6E6',white='FFFFFFFF';
+    const border={top:{style:'thin',color:{argb:'FFB7B7B7'}},left:{style:'thin',color:{argb:'FFB7B7B7'}},bottom:{style:'thin',color:{argb:'FFB7B7B7'}},right:{style:'thin',color:{argb:'FFB7B7B7'}}};
+    const fmtDate=v=>{const x=String(v||'').slice(0,10);if(/^\\d{4}-\\d{2}-\\d{2}$/.test(x)){const [y,m,dd]=x.split('-');return dd+'/'+m+'/'+y}return x||'-'};
+    const freq=({DAILY:'Harian',WEEKLY:'Mingguan',MONTHLY:'Bulanan'})[c.frequency]||c.frequency||'-';
+    const ov=(itemId,userId)=>{const x=ovs.find(o=>Number(o.item_id)===Number(itemId)&&Number(o.user_id)===Number(userId));return x?Number(x.target):null};
+    const target=(it,userId)=>it.target_mode==='SHARED'?Number(it.target||0):Number(ov(it.id,userId)??it.target??0);
+    const progress=(itemId,userId)=>tx.filter(t=>Number(t.item_id)===Number(itemId)&&Number(t.user_id)===Number(userId)).reduce((n,t)=>n+Number(t.quantity||0),0);
+    const allProgress=itemId=>tx.filter(t=>Number(t.item_id)===Number(itemId)).reduce((n,t)=>n+Number(t.quantity||0),0);
+    const status=(it,userId)=>{const p=progress(it.id,userId),tar=target(it,userId);return p<=0?'Belum Ada Setoran':p>=tar?'Target Tercapai':'Target Belum Tercapai'};
+    const logoPath=path.join(__dirname,'logo.png');let logoId=null;
+    try{if(fs.existsSync(logoPath))logoId=wb.addImage({filename:logoPath,extension:'png'})}catch(e){console.warn('SETORAN_LOGO_SKIP',e.message)}
+    const addLogo=(ws,range)=>{if(logoId!==null)ws.addImage(logoId,range)};
     const ws=wb.addWorksheet('Setoran',{views:[{state:'frozen',ySplit:8}]});
-    ws.mergeCells('A1:B3');ws.mergeCells('C1:'+titleEnd+'1');ws.mergeCells('C2:'+titleEnd+'3');
-    ws.getCell('C1').value='CASSANO';ws.getCell('C1').font={bold:true,size:14,color:{argb:'FFFFFFFF'}};ws.getCell('C1').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111111'}};ws.getCell('C1').alignment={horizontal:'center',vertical:'middle'};
-    ws.getCell('C2').value='DATA SETORAN '+String(c.name||'').toUpperCase();ws.getCell('C2').font={bold:true,size:20,color:{argb:'FFFFFFFF'}};ws.getCell('C2').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111111'}};ws.getCell('C2').alignment={horizontal:'center',vertical:'middle',wrapText:true};
-    try{const lr=await fetch('https://raw.githubusercontent.com/ilmis6471-web/inventory_cassano/main/logo.png');if(lr.ok){const lb=Buffer.from(await lr.arrayBuffer());const id=wb.addImage({buffer:lb,extension:'png'});ws.addImage(id,{tl:{col:0.12,row:0.12},ext:{width:92,height:92}})}}catch(e){console.warn('SETORAN_LOGO_SKIP',e.message)}
-    ws.mergeCells('A4:B4');ws.getCell('A4').value='Periode';ws.getCell('C4').value=fmtDate(c.start_date)+' - '+fmtDate(c.end_date);
-    ws.mergeCells('A5:B5');ws.getCell('A5').value='Frekuensi';ws.getCell('C5').value=({DAILY:'Harian',WEEKLY:'Mingguan',MONTHLY:'Bulanan'})[c.frequency]||c.frequency||'-';
-    [4,5].forEach(r=>{ws.getCell('A'+r).font={bold:true};ws.getCell('A'+r).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8E8E8'}}});
-    const headerRow=8,headers=['No','Nama',...its.map(i=>i.name||'-'),'Status'];headers.forEach((v,i)=>{const cell=ws.getRow(headerRow).getCell(i+1);cell.value=v;cell.font={bold:true,color:{argb:'FFFFFFFF'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7A1824'}};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
-    mem.forEach((m,i)=>{const vals=its.map(it=>totalFor(it.id,m.user_id));const statuses=its.map((it,j)=>{const val=it.target_mode==='SHARED'?sharedTotal(it.id):vals[j],tar=targetFor(it,m.user_id);return val<=0?'Belum Ada Setoran':val>=tar?'Target Tercapai':'Target Belum Tercapai'});const status=statuses.length&&statuses.every(x=>x==='Target Tercapai')?'Target Tercapai':statuses.length&&statuses.every(x=>x==='Belum Ada Setoran')?'Belum Ada Setoran':'Target Belum Tercapai';[i+1,m.name||'-',...vals,status].forEach((v,j)=>{const cell=ws.getRow(headerRow+1+i).getCell(j+1);cell.value=v;cell.alignment={vertical:'middle',wrapText:true};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};if(j>=2&&j<2+its.length)cell.numFmt='#,##0.##'});});
-    const totalRow=headerRow+1+mem.length;ws.getRow(totalRow).getCell(2).value='TOTAL';its.forEach((it,j)=>ws.getRow(totalRow).getCell(3+j).value=sharedTotal(it.id));ws.getRow(totalRow).eachCell(cell=>{cell.font={bold:true};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8E8E8'}};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
-    const sCol=summaryStart,sTarget=colLetter(sCol),sProgress=colLetter(sCol+1);ws.getCell(sTarget+'4').value='TARGET';ws.getCell(sProgress+'4').value='PROGRESS';ws.getCell(sTarget+'4').font=ws.getCell(sProgress+'4').font={bold:true,color:{argb:'FFFFFFFF'}};ws.getCell(sTarget+'4').fill=ws.getCell(sProgress+'4').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7A1824'}};its.forEach((it,j)=>{const r=5+j;ws.getCell(colLetter(sCol-1)+r).value=it.name||'-';ws.getCell(sTarget+r).value=it.target_mode==='SHARED'?Number(it.target||0):mem.reduce((sum,m)=>sum+targetFor(it,m.user_id),0);ws.getCell(sProgress+r).value=sharedTotal(it.id);ws.getCell(sTarget+r).numFmt=ws.getCell(sProgress+r).numFmt='#,##0.##';[ws.getCell(colLetter(sCol-1)+r),ws.getCell(sTarget+r),ws.getCell(sProgress+r)].forEach(cell=>{cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}})});
-    ws.columns=[{width:7},{width:28},...its.map(()=>({width:18})),{width:25},{width:20},{width:14},{width:14}];ws.getRow(1).height=22;ws.getRow(2).height=32;ws.getRow(8).height=32;
-    const detail=wb.addWorksheet('Riwayat Setoran',{views:[{state:'frozen',ySplit:6}]});detail.mergeCells('A1:F3');detail.getCell('A1').value='CASSANO — RIWAYAT SETORAN';detail.getCell('A1').font={bold:true,size:18,color:{argb:'FFFFFFFF'}};detail.getCell('A1').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111111'}};detail.getCell('A1').alignment={horizontal:'center',vertical:'middle'};
-    try{const lr=await fetch('https://raw.githubusercontent.com/ilmis6471-web/inventory_cassano/main/logo.png');if(lr.ok){const lb=Buffer.from(await lr.arrayBuffer());const id=wb.addImage({buffer:lb,extension:'png'});detail.addImage(id,{tl:{col:0.12,row:0.12},ext:{width:70,height:70}})}}catch(e){}
-    ['Tanggal','Nama','Barang','Jumlah','Catatan','Dicatat Oleh'].forEach((v,i)=>{const cell=detail.getRow(6).getCell(i+1);cell.value=v;cell.font={bold:true,color:{argb:'FFFFFFFF'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7A1824'}};cell.alignment={horizontal:'center',vertical:'middle'};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
-    tx.forEach((t,i)=>{[t.created_at?new Date(t.created_at):'',t.user||'-',t.item_name||'-',Number(t.quantity||0),t.note||'',t.created_by_name||'-'].forEach((v,j)=>{const cell=detail.getRow(7+i).getCell(j+1);cell.value=v;cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};if(j===0&&v)cell.numFmt='dd/mm/yyyy hh:mm';if(j===3)cell.numFmt='#,##0.##'});});
-    detail.columns=[{width:22},{width:24},{width:20},{width:14},{width:30},{width:24}];detail.getRow(1).height=30;detail.getRow(6).height=28;
+    const n=items.length, tableLast=2+n+1, sumCol=tableLast+2, sumName=sumCol-1, lastCol=Math.max(tableLast,sumCol+1);
+    const col=n=>{let r='';while(n){const x=(n-1)%26;r=String.fromCharCode(65+x)+r;n=Math.floor((n-1)/26)}return r};
+    const end=col(lastCol);
+    ws.mergeCells('A1:B4');ws.mergeCells('C1:'+end+'2');ws.mergeCells('C3:'+end+'4');
+    ws.getCell('C1').value='CASSANO';ws.getCell('C3').value='DATA SETORAN '+String(c.name||'').toUpperCase();
+    [ws.getCell('C1'),ws.getCell('C3')].forEach((cell,i)=>{cell.font={bold:true,size:i?20:13,color:{argb:white}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:dark}};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true}});
+    addLogo(ws,{tl:{col:0.18,row:0.18},ext:{width:105,height:105}});
+    ws.mergeCells('A5:B5');ws.mergeCells('C5:D5');ws.mergeCells('A6:B6');ws.mergeCells('C6:D6');
+    ws.getCell('A5').value='PERIODE';ws.getCell('C5').value=fmtDate(c.start_date)+' - '+fmtDate(c.end_date);
+    ws.getCell('A6').value='FREKUENSI';ws.getCell('C6').value=freq;
+    ['A5','A6'].forEach(x=>{ws.getCell(x).font={bold:true,color:{argb:dark}};ws.getCell(x).fill={type:'pattern',pattern:'solid',fgColor:{argb:gray}}});
+    ['C5','C6'].forEach(x=>ws.getCell(x).font={bold:true});
+    const hr=8,headers=['No','Nama',...items.map(x=>x.name||'-'),'Status'];
+    headers.forEach((v,i)=>{const cell=ws.getRow(hr).getCell(i+1);cell.value=v;cell.font={bold:true,color:{argb:white}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:red}};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true};cell.border=border});
+    members.forEach((m,i)=>{
+      const vals=items.map(it=>progress(it.id,m.user_id));
+      const sts=items.map(it=>status(it,m.user_id));
+      const overall=sts.length&&sts.every(x=>x==='Target Tercapai')?'Target Tercapai':sts.length&&sts.every(x=>x==='Belum Ada Setoran')?'Belum Ada Setoran':'Target Belum Tercapai';
+      [i+1,m.name||'-',...vals,overall].forEach((v,j)=>{const cell=ws.getRow(hr+1+i).getCell(j+1);cell.value=v;cell.border=border;cell.alignment={vertical:'middle',wrapText:true};if(j>=2&&j<2+n)cell.numFmt='#,##0.##';if(j===lastCol-1){cell.font={bold:true};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:overall==='Target Tercapai'?green:overall==='Belum Ada Setoran'?gray:yellow}}}});
+    });
+    const tr=hr+1+members.length;ws.getRow(tr).getCell(2).value='TOTAL';items.forEach((it,j)=>ws.getRow(tr).getCell(3+j).value=allProgress(it.id));ws.getRow(tr).eachCell(cell=>{cell.font={bold:true};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:gray}};cell.border=border});
+    ws.getCell('A'+(tr+2)).value='Keterangan: anggota tetap dapat melakukan setoran meskipun target sudah tercapai.';
+    ws.mergeCells('A'+(tr+2)+':'+col(Math.max(4,lastCol))+''+(tr+2));ws.getCell('A'+(tr+2)).font={italic:true,size:10,color:{argb:'FF666666'}};
+    ws.getCell(col(sumName)+'4').value='TARGET';ws.getCell(col(sumCol)+'4').value='PROGRESS';
+    [ws.getCell(col(sumName)+'4'),ws.getCell(col(sumCol)+'4')].forEach(x=>{x.font={bold:true,color:{argb:white}};x.fill={type:'pattern',pattern:'solid',fgColor:{argb:red}};x.alignment={horizontal:'center'}});
+    items.forEach((it,j)=>{const r=5+j;ws.getCell(col(sumName)+r).value=it.name||'-';ws.getCell(col(sumCol)+r).value=allProgress(it.id);ws.getCell(col(sumName)+r).border=ws.getCell(col(sumCol)+r).border=border;ws.getCell(col(sumName)+r).alignment={wrapText:true};ws.getCell(col(sumCol)+r).numFmt='#,##0.##';ws.getCell(col(sumCol)+r).border=border;const t=it.target_mode==='SHARED'?Number(it.target||0):members.reduce((a,m)=>a+target(it,m.user_id),0);ws.getCell(col(sumName)+r).note=undefined;ws.getCell(col(sumCol)+r).value=allProgress(it.id);ws.getCell(col(sumName)+r).value=(it.name||'-')+' / '+t;});
+    ws.columns=[{width:7},{width:28},...items.map(()=>({width:17})),{width:24},{width:4},{width:26},{width:15}];
+    ws.getRow(1).height=25;ws.getRow(3).height=34;ws.getRow(hr).height=32;ws.autoFilter={from:'A8',to:col(lastCol)+'8'};
+    const detail=wb.addWorksheet('Riwayat Setoran',{views:[{state:'frozen',ySplit:7}]});
+    detail.mergeCells('A1:F4');detail.getCell('A1').value='RIWAYAT SETORAN — '+String(c.name||'').toUpperCase();detail.getCell('A1').font={bold:true,size:18,color:{argb:white}};detail.getCell('A1').fill={type:'pattern',pattern:'solid',fgColor:{argb:dark}};detail.getCell('A1').alignment={horizontal:'center',vertical:'middle',wrapText:true};addLogo(detail,{tl:{col:0.12,row:0.12},ext:{width:90,height:90}});
+    detail.getCell('A5').value='Periode';detail.getCell('B5').value=fmtDate(c.start_date)+' - '+fmtDate(c.end_date);detail.getCell('D5').value='Frekuensi';detail.getCell('E5').value=freq;
+    ['A5','D5'].forEach(x=>{detail.getCell(x).font={bold:true};detail.getCell(x).fill={type:'pattern',pattern:'solid',fgColor:{argb:gray}}});
+    ['Tanggal','Nama','Barang','Jumlah','Catatan','Dicatat Oleh'].forEach((v,i)=>{const cell=detail.getRow(7).getCell(i+1);cell.value=v;cell.font={bold:true,color:{argb:white}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:red}};cell.alignment={horizontal:'center',vertical:'middle'};cell.border=border});
+    tx.forEach((t,i)=>{[t.created_at?new Date(t.created_at):'',t.user||'-',t.item_name||'-',Number(t.quantity||0),t.note||'',t.created_by_name||'-'].forEach((v,j)=>{const cell=detail.getRow(8+i).getCell(j+1);cell.value=v;cell.border=border;cell.alignment={vertical:'top',wrapText:true};if(j===0&&v)cell.numFmt='dd/mm/yyyy hh:mm';if(j===3)cell.numFmt='#,##0.##'});});
+    detail.columns=[{width:22},{width:25},{width:22},{width:14},{width:34},{width:24}];detail.getRow(1).height=32;detail.getRow(7).height=30;detail.autoFilter={from:'A7',to:'F7'};
     const buf=await wb.xlsx.writeBuffer(),safe=String(c.name||'campaign').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,60)||'campaign';
     res.status(200).setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').setHeader('Content-Disposition','attachment; filename="Setoran-'+safe+'.xlsx"').setHeader('Content-Length',buf.length).end(Buffer.from(buf));
   }catch(err){console.error('SETORAN_EXPORT_ERROR',err);res.status(500).json({error:'Gagal membuat Excel setoran',detail:err.message});}
