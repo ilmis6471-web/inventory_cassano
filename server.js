@@ -84,7 +84,7 @@ app.post('/api/setoran/campaigns',auth,async(req,res)=>{
   const client=await pool.connect();try{await client.query('BEGIN');
     const c=(await client.query('INSERT INTO setoran_campaigns(name,frequency,start_date,end_date,notes,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id',[b.name,b.frequency,b.start_date,b.end_date,b.notes||'',req.me.id])).rows[0];
     for(const uid of members){if(!(await client.query('SELECT id FROM users WHERE id=$1',[uid])).rows[0])throw new Error('Member tidak ditemukan: '+uid);await client.query('INSERT INTO setoran_members(campaign_id,user_id) VALUES($1,$2)',[c.id,uid])}
-    let order=0;for(const it of items){const target=Number(it.target);if(!it.name||!Number.isFinite(target)||target<0||!['SHARED','PER_MEMBER'].includes(it.target_mode))throw new Error('Barang setoran tidak valid');await client.query('INSERT INTO setoran_items(campaign_id,name,target,target_mode,sort_order) VALUES($1,$2,$3,$4,$5)',[c.id,String(it.name).trim(),target,it.target_mode,order++])}
+    let order=0;for(const it of items){const target=Number(it.target),mode=it.mode||it.target_mode||'SHARED';if(!it.name||!Number.isFinite(target)||target<0||!['SHARED','PER_MEMBER'].includes(mode))throw new Error('Barang setoran tidak valid');await client.query('INSERT INTO setoran_items(campaign_id,name,target,target_mode,sort_order) VALUES($1,$2,$3,$4,$5)',[c.id,String(it.name).trim(),target,mode,order++])}
     await client.query('COMMIT');res.json({ok:true,id:c.id});
   }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}
 });
