@@ -109,8 +109,12 @@ app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
   if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
   const d=await setoranDetail(req.params.id);if(!d)return res.status(404).json({error:'Campaign tidak ditemukan'});
   const {campaign:c,members,items,overrides,transactions}=d;
-  const ov=(itemId,userId)=>{const x=overrides.find(o=>Number(o.item_id)===Number(itemId)&&Number(o.user_id)===Number(userId));return x?Number(x.target):null};
-  const totalFor=(itemId,userId)=>transactions.filter(t=>Number(t.item_id)===Number(itemId)&&Number(t.user_id)===Number(userId)).reduce((a,t)=>a+Number(t.quantity||0),0);
+  const tx=Array.isArray(transactions)?transactions:[];
+  const its=Array.isArray(items)?items:[];
+  const mem=Array.isArray(members)?members:[];
+  const ovs=Array.isArray(overrides)?overrides:[];
+  const ov=(itemId,userId)=>{const x=ovs.find(o=>Number(o.item_id)===Number(itemId)&&Number(o.user_id)===Number(userId));return x?Number(x.target):null};
+  const totalFor=(itemId,userId)=>tx.filter(t=>Number(t.item_id)===Number(itemId)&&Number(t.user_id)===Number(userId)).reduce((a,t)=>a+Number(t.quantity||0),0);
   const sharedTotal=itemId=>transactions.filter(t=>Number(t.item_id)===Number(itemId)).reduce((a,t)=>a+Number(t.quantity||0),0);
   const targetFor=(item,userId)=>item.target_mode==='SHARED'?Number(item.target):Number(ov(item.id,userId)??item.target);
   const wb=new ExcelJS.Workbook();wb.creator='Inventory Cassano';wb.created=new Date();
@@ -126,9 +130,9 @@ app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
   ws.getCell('C1').border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};
   ws.getCell('A5').value='Periode';ws.getCell('B5').value=c.start_date+' s/d '+c.end_date;ws.mergeCells('B5:'+titleEnd+'5');
   ws.getCell('A6').value='Frekuensi';ws.getCell('B6').value=({DAILY:'Harian',WEEKLY:'Mingguan',MONTHLY:'Bulanan'})[c.frequency]||c.frequency||'-';ws.mergeCells('B6:'+titleEnd+'6');
-  const headerRow=8;const headers=['No','Nama',...items.map(i=>i.name),'Status'];
+  const headerRow=8;const headers=['No','Nama',...its.map(i=>i.name),'Status'];
   headers.forEach((v,i)=>{const cell=ws.getRow(headerRow).getCell(i+1);cell.value=v;cell.font={bold:true};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
-  members.forEach((m,i)=>{const vals=items.map(it=>totalFor(it.id,m.user_id));const statuses=items.map((it,j)=>{const val=it.target_mode==='SHARED'?sharedTotal(it.id):vals[j];const tar=targetFor(it,m.user_id);return val<=0?'Belum Ada Setoran':val>=tar?'Target Tercapai':'Target Belum Tercapai'});const row=[i+1,m.name,...vals,statuses.every(x=>x==='Target Tercapai')?'Target Tercapai':statuses.every(x=>x==='Belum Ada Setoran')?'Belum Ada Setoran':'Target Belum Tercapai'];row.forEach((v,j)=>{const cell=ws.getRow(headerRow+1+i).getCell(j+1);cell.value=v;cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};cell.alignment={vertical:'middle',wrapText:true}})});
+  mem.forEach((m,i)=>{const vals=items.map(it=>totalFor(it.id,m.user_id));const statuses=items.map((it,j)=>{const val=it.target_mode==='SHARED'?sharedTotal(it.id):vals[j];const tar=targetFor(it,m.user_id);return val<=0?'Belum Ada Setoran':val>=tar?'Target Tercapai':'Target Belum Tercapai'});const row=[i+1,m.name,...vals,statuses.every(x=>x==='Target Tercapai')?'Target Tercapai':statuses.every(x=>x==='Belum Ada Setoran')?'Belum Ada Setoran':'Target Belum Tercapai'];row.forEach((v,j)=>{const cell=ws.getRow(headerRow+1+i).getCell(j+1);cell.value=v;cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};cell.alignment={vertical:'middle',wrapText:true}})});
   const totalRow=headerRow+1+members.length;ws.getRow(totalRow).getCell(2).value='TOTAL';items.forEach((it,j)=>ws.getRow(totalRow).getCell(3+j).value=sharedTotal(it.id));ws.getRow(totalRow).eachCell(cell=>{cell.font={bold:true};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
   ws.columns=[{width:7},{width:28},...items.map(()=>({width:18})),{width:25}];ws.getRow(1).height=24;ws.getRow(4).height=24;ws.getRow(headerRow).height=32;
   const detail=wb.addWorksheet('Riwayat Setoran',{views:[{state:'frozen',ySplit:6}]});
