@@ -117,9 +117,9 @@ app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Setoran');
   const detailRows=[['Tanggal','Nama','Barang','Jumlah','Catatan','Dicatat Oleh'],...transactions.map(t=>[new Date(t.created_at),t.user,t.item_name,Number(t.quantity),t.note||'',t.created_by_name||'-'])];
   const ws2=XLSX.utils.aoa_to_sheet(detailRows);ws2['!cols']=[{wch:22},{wch:24},{wch:20},{wch:12},{wch:30},{wch:24}];XLSX.utils.book_append_sheet(wb,ws2,'Riwayat Setoran');
-  const buf=XLSX.write(wb,{type:'buffer',bookType:'xlsx',cellStyles:true,compression:true});
+  const buf=XLSX.write(wb,{type:'buffer',bookType:'xlsx'});
   const safe=String(c.name).replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,60)||'campaign';
-  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition','attachment; filename="Setoran-'+safe+'.xlsx"');res.end(buf);
+  res.status(200);res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition','attachment; filename="Setoran-'+safe+'.xlsx"');res.setHeader('Content-Length',buf.length);res.end(buf);
 });
 
 app.get('/api/dashboard',auth,async(req,res)=>res.json({items:(await one('SELECT COUNT(*)::int n FROM items')).n,stock:(await one('SELECT COALESCE(SUM(stock),0)::int n FROM items')).n,pending:(await one("SELECT COUNT(*)::int n FROM orders WHERE status='Pending'")).n,approved:(await one("SELECT COUNT(*)::int n FROM orders WHERE status='Approved'")).n}));
