@@ -106,42 +106,42 @@ app.post('/api/setoran/campaigns/:id/transactions',auth,async(req,res)=>{
   await run('INSERT INTO setoran_transactions(campaign_id,item_id,user_id,quantity,note,created_by) VALUES($1,$2,$3,$4,$5,$6)',[cid,itemId,uid,qty,req.body?.note||'',req.me.id]);res.json({ok:true})
 });
 app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
-  if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
-  const d=await setoranDetail(req.params.id);if(!d)return res.status(404).json({error:'Campaign tidak ditemukan'});
-  const {campaign:c,members,items,overrides,transactions}=d;
-  const tx=Array.isArray(transactions)?transactions:[];
-  const its=Array.isArray(items)?items:[];
-  const mem=Array.isArray(members)?members:[];
-  const ovs=Array.isArray(overrides)?overrides:[];
-  const ov=(itemId,userId)=>{const x=ovs.find(o=>Number(o.item_id)===Number(itemId)&&Number(o.user_id)===Number(userId));return x?Number(x.target):null};
-  const totalFor=(itemId,userId)=>tx.filter(t=>Number(t.item_id)===Number(itemId)&&Number(t.user_id)===Number(userId)).reduce((a,t)=>a+Number(t.quantity||0),0);
-  const sharedTotal=itemId=>transactions.filter(t=>Number(t.item_id)===Number(itemId)).reduce((a,t)=>a+Number(t.quantity||0),0);
-  const targetFor=(item,userId)=>item.target_mode==='SHARED'?Number(item.target):Number(ov(item.id,userId)??item.target);
-  const wb=new ExcelJS.Workbook();wb.creator='Inventory Cassano';wb.created=new Date();
-  const logoPath=path.join(__dirname,'logo.png');
-  let logoId=null;try{logoId=wb.addImage({filename:logoPath,extension:'png'})}catch(e){}
-  const lastCol=5+items.length;
-  const colLetter=n=>{let x=n,r='';while(x){const m=(x-1)%26;r=String.fromCharCode(65+m)+r;x=Math.floor((x-1)/26)}return r};
-  const titleEnd=colLetter(lastCol);
-  const ws=wb.addWorksheet('Setoran',{views:[{state:'frozen',ySplit:5}]});
-  ws.mergeCells('A1:B4');if(logoId!==null)ws.addImage(logoId,'A1:B4');
-  ws.mergeCells('C1:'+titleEnd+'4');const title=ws.getCell('C1');title.value='DATA SETORAN '+String(c.name||'').toUpperCase();title.font={bold:true,size:18,color:{argb:'FFFFFFFF'}};title.alignment={vertical:'middle',horizontal:'center',wrapText:true};
-  ws.getCell('C1').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111118'}};
-  ws.getCell('C1').border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};
-  ws.getCell('A5').value='Periode';ws.getCell('B5').value=c.start_date+' s/d '+c.end_date;ws.mergeCells('B5:'+titleEnd+'5');
-  ws.getCell('A6').value='Frekuensi';ws.getCell('B6').value=({DAILY:'Harian',WEEKLY:'Mingguan',MONTHLY:'Bulanan'})[c.frequency]||c.frequency||'-';ws.mergeCells('B6:'+titleEnd+'6');
-  const headerRow=8;const headers=['No','Nama',...its.map(i=>i.name),'Status'];
-  headers.forEach((v,i)=>{const cell=ws.getRow(headerRow).getCell(i+1);cell.value=v;cell.font={bold:true};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
-  mem.forEach((m,i)=>{const vals=items.map(it=>totalFor(it.id,m.user_id));const statuses=items.map((it,j)=>{const val=it.target_mode==='SHARED'?sharedTotal(it.id):vals[j];const tar=targetFor(it,m.user_id);return val<=0?'Belum Ada Setoran':val>=tar?'Target Tercapai':'Target Belum Tercapai'});const row=[i+1,m.name,...vals,statuses.every(x=>x==='Target Tercapai')?'Target Tercapai':statuses.every(x=>x==='Belum Ada Setoran')?'Belum Ada Setoran':'Target Belum Tercapai'];row.forEach((v,j)=>{const cell=ws.getRow(headerRow+1+i).getCell(j+1);cell.value=v;cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};cell.alignment={vertical:'middle',wrapText:true}})});
-  const totalRow=headerRow+1+members.length;ws.getRow(totalRow).getCell(2).value='TOTAL';items.forEach((it,j)=>ws.getRow(totalRow).getCell(3+j).value=sharedTotal(it.id));ws.getRow(totalRow).eachCell(cell=>{cell.font={bold:true};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
-  ws.columns=[{width:7},{width:28},...items.map(()=>({width:18})),{width:25}];ws.getRow(1).height=24;ws.getRow(4).height=24;ws.getRow(headerRow).height=32;
-  const detail=wb.addWorksheet('Riwayat Setoran',{views:[{state:'frozen',ySplit:6}]});
-  detail.mergeCells('A1:B4');if(logoId!==null)detail.addImage(logoId,'A1:B4');detail.mergeCells('C1:F4');const dt=detail.getCell('C1');dt.value='RIWAYAT SETORAN';dt.font={bold:true,size:18,color:{argb:'FFFFFFFF'}};dt.alignment={vertical:'middle',horizontal:'center'};dt.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111118'}};
-  ['Tanggal','Nama','Barang','Jumlah','Catatan','Dicatat Oleh'].forEach((v,i)=>{const cell=detail.getRow(6).getCell(i+1);cell.value=v;cell.font={bold:true};cell.alignment={horizontal:'center'};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
-  transactions.forEach((t,i)=>{[new Date(t.created_at),t.user,t.item_name,Number(t.quantity),t.note||'',t.created_by_name||'-'].forEach((v,j)=>{const cell=detail.getRow(7+i).getCell(j+1);cell.value=v;cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}});if(j===0)cell.numFmt='dd/mm/yyyy hh:mm'}});detail.columns=[{width:22},{width:24},{width:20},{width:12},{width:30},{width:24}];detail.getRow(1).height=24;detail.getRow(4).height=24;detail.getRow(6).height=28;
-  const buf=await wb.xlsx.writeBuffer();
-  const safe=String(c.name).replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,60)||'campaign';
-  res.status(200);res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition','attachment; filename="Setoran-'+safe+'.xlsx"');res.setHeader('Content-Length',buf.length);res.end(Buffer.from(buf));
+  try{
+    if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
+    const d=await setoranDetail(req.params.id);
+    if(!d)return res.status(404).json({error:'Campaign tidak ditemukan'});
+    const {campaign:c}=d;
+    const tx=Array.isArray(d.transactions)?d.transactions:[];
+    const its=Array.isArray(d.items)?d.items:[];
+    const mem=Array.isArray(d.members)?d.members:[];
+    const ovs=Array.isArray(d.overrides)?d.overrides:[];
+    const ov=(itemId,userId)=>{const x=ovs.find(o=>Number(o.item_id)===Number(itemId)&&Number(o.user_id)===Number(userId));return x?Number(x.target):null};
+    const totalFor=(itemId,userId)=>tx.filter(t=>Number(t.item_id)===Number(itemId)&&Number(t.user_id)===Number(userId)).reduce((a,t)=>a+Number(t.quantity||0),0);
+    const sharedTotal=itemId=>tx.filter(t=>Number(t.item_id)===Number(itemId)).reduce((a,t)=>a+Number(t.quantity||0),0);
+    const targetFor=(item,userId)=>item.target_mode==='SHARED'?Number(item.target):Number(ov(item.id,userId)??item.target);
+    const wb=new ExcelJS.Workbook();wb.creator='Inventory Cassano';wb.created=new Date();wb.modified=new Date();
+    const colLetter=n=>{let x=n,r='';while(x){const m=(x-1)%26;r=String.fromCharCode(65+m)+r;x=Math.floor((x-1)/26)}return r};
+    const lastCol=Math.max(4,3+its.length);const titleEnd=colLetter(lastCol);
+    const ws=wb.addWorksheet('Setoran',{views:[{state:'frozen',ySplit:8}]});
+    ws.mergeCells('A1:'+titleEnd+'1');ws.mergeCells('A2:'+titleEnd+'3');
+    ws.getCell('A1').value='CASSANO';ws.getCell('A1').font={bold:true,size:14,color:{argb:'FFFFFFFF'}};ws.getCell('A1').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111111'}};ws.getCell('A1').alignment={horizontal:'center',vertical:'middle'};
+    ws.getCell('A2').value='DATA SETORAN '+String(c.name||'').toUpperCase();ws.getCell('A2').font={bold:true,size:20,color:{argb:'FFFFFFFF'}};ws.getCell('A2').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111111'}};ws.getCell('A2').alignment={horizontal:'center',vertical:'middle'};
+    ws.mergeCells('A4:B4');ws.getCell('A4').value='Periode';ws.getCell('B4').value=String(c.start_date||'').slice(0,10)+' - '+String(c.end_date||'').slice(0,10);
+    ws.mergeCells('A5:B5');ws.getCell('A5').value='Frekuensi';ws.getCell('B5').value=({DAILY:'Harian',WEEKLY:'Mingguan',MONTHLY:'Bulanan'})[c.frequency]||c.frequency||'-';
+    [4,5].forEach(r=>{ws.getCell('A'+r).font={bold:true};ws.getCell('A'+r).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8E8E8'}}});
+    const headerRow=8;const headers=['No','Nama',...its.map(i=>i.name||'-'),'Status'];headers.forEach((v,i)=>{const cell=ws.getRow(headerRow).getCell(i+1);cell.value=v;cell.font={bold:true,color:{argb:'FFFFFFFF'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7A1824'}};cell.alignment={horizontal:'center',vertical:'middle',wrapText:true};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
+    mem.forEach((m,i)=>{const vals=its.map(it=>totalFor(it.id,m.user_id));const statuses=its.map((it,j)=>{const val=it.target_mode==='SHARED'?sharedTotal(it.id):vals[j];const tar=targetFor(it,m.user_id);return val<=0?'Belum Ada Setoran':val>=tar?'Target Tercapai':'Target Belum Tercapai'});const row=[i+1,m.name||'-',...vals,statuses.length&&statuses.every(x=>x==='Target Tercapai')?'Target Tercapai':statuses.length&&statuses.every(x=>x==='Belum Ada Setoran')?'Belum Ada Setoran':'Target Belum Tercapai'];row.forEach((v,j)=>{const cell=ws.getRow(headerRow+1+i).getCell(j+1);cell.value=v;cell.alignment={vertical:'middle',wrapText:true};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};if(j>=2&&j<2+its.length)cell.numFmt='#,##0.##'});});
+    const totalRow=headerRow+1+mem.length;ws.getRow(totalRow).getCell(2).value='TOTAL';its.forEach((it,j)=>ws.getRow(totalRow).getCell(3+j).value=sharedTotal(it.id));ws.getRow(totalRow).eachCell(cell=>{cell.font={bold:true};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE8E8E8'}};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
+    ws.columns=[{width:7},{width:28},...its.map(()=>({width:18})),{width:25}];ws.getRow(1).height=22;ws.getRow(2).height=32;ws.getRow(8).height=32;
+    const detail=wb.addWorksheet('Riwayat Setoran',{views:[{state:'frozen',ySplit:6}]});
+    detail.mergeCells('A1:F3');detail.getCell('A1').value='CASSANO — RIWAYAT SETORAN';detail.getCell('A1').font={bold:true,size:18,color:{argb:'FFFFFFFF'}};detail.getCell('A1').fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF111111'}};detail.getCell('A1').alignment={horizontal:'center',vertical:'middle'};
+    ['Tanggal','Nama','Barang','Jumlah','Catatan','Dicatat Oleh'].forEach((v,i)=>{const cell=detail.getRow(6).getCell(i+1);cell.value=v;cell.font={bold:true,color:{argb:'FFFFFFFF'}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF7A1824'}};cell.alignment={horizontal:'center',vertical:'middle'};cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}}});
+    tx.forEach((t,i)=>{[t.created_at?new Date(t.created_at):'',t.user||'-',t.item_name||'-',Number(t.quantity||0),t.note||'',t.created_by_name||'-'].forEach((v,j)=>{const cell=detail.getRow(7+i).getCell(j+1);cell.value=v;cell.border={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};if(j===0&&v)cell.numFmt='dd/mm/yyyy hh:mm';if(j===3)cell.numFmt='#,##0.##'});});
+    detail.columns=[{width:22},{width:24},{width:20},{width:14},{width:30},{width:24}];detail.getRow(1).height=30;detail.getRow(6).height=28;
+    const buf=await wb.xlsx.writeBuffer();const safe=String(c.name||'campaign').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,60)||'campaign';
+    res.status(200).setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').setHeader('Content-Disposition','attachment; filename="Setoran-'+safe+'.xlsx"').setHeader('Content-Length',buf.length).end(Buffer.from(buf));
+  }catch(err){console.error('SETORAN_EXPORT_ERROR',err);res.status(500).json({error:'Gagal membuat Excel setoran',detail:err.message});}
 });
+
 app.get('/api/dashboard',auth,async(req,res)=>res.json({items:(await one('SELECT COUNT(*)::int n FROM items')).n,stock:(await one('SELECT COALESCE(SUM(stock),0)::int n FROM items')).n,pending:(await one("SELECT COUNT(*)::int n FROM orders WHERE status='Pending'")).n,approved:(await one("SELECT COUNT(*)::int n FROM orders WHERE status='Approved'")).n}));
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'index.html')));init().then(()=>app.listen(PORT,()=>console.log('Inventory Cassano running on port '+PORT))).catch(e=>{console.error(e);process.exit(1)});
