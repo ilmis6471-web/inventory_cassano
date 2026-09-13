@@ -125,7 +125,7 @@ app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
     try{if(fs.existsSync(logoPath))logoId=wb.addImage({filename:logoPath,extension:'png'})}catch(e){console.warn('SETORAN_LOGO_SKIP',e.message)}
     const addLogo=(ws,range)=>{if(logoId!==null)ws.addImage(logoId,range)};
     const ws=wb.addWorksheet('Setoran',{views:[{state:'frozen',ySplit:8}]});
-    const n=items.length, tableLast=2+n+1, sumCol=tableLast+2, sumName=sumCol-1, lastCol=Math.max(tableLast,sumCol+1);
+    const n=items.length, tableLast=2+n+1, sumName=tableLast+2, sumTarget=sumName+1, sumProgress=sumName+2, lastCol=Math.max(tableLast,sumProgress);
     const col=n=>{let r='';while(n){const x=(n-1)%26;r=String.fromCharCode(65+x)+r;n=Math.floor((n-1)/26)}return r};
     const end=col(lastCol);
     ws.mergeCells('A1:B4');ws.mergeCells('C1:'+end+'2');ws.mergeCells('C3:'+end+'4');
@@ -148,10 +148,10 @@ app.get('/api/setoran/campaigns/:id/export',auth,async(req,res)=>{
     const tr=hr+1+members.length;ws.getRow(tr).getCell(2).value='TOTAL';items.forEach((it,j)=>ws.getRow(tr).getCell(3+j).value=allProgress(it.id));ws.getRow(tr).eachCell(cell=>{cell.font={bold:true};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:gray}};cell.border=border});
     ws.getCell('A'+(tr+2)).value='Keterangan: anggota tetap dapat melakukan setoran meskipun target sudah tercapai.';
     ws.mergeCells('A'+(tr+2)+':'+col(Math.max(4,lastCol))+''+(tr+2));ws.getCell('A'+(tr+2)).font={italic:true,size:10,color:{argb:'FF666666'}};
-    ws.getCell(col(sumName)+'4').value='TARGET';ws.getCell(col(sumCol)+'4').value='PROGRESS';
-    [ws.getCell(col(sumName)+'4'),ws.getCell(col(sumCol)+'4')].forEach(x=>{x.font={bold:true,color:{argb:white}};x.fill={type:'pattern',pattern:'solid',fgColor:{argb:red}};x.alignment={horizontal:'center'}});
-    items.forEach((it,j)=>{const r=5+j;ws.getCell(col(sumName)+r).value=it.name||'-';ws.getCell(col(sumCol)+r).value=allProgress(it.id);ws.getCell(col(sumName)+r).border=ws.getCell(col(sumCol)+r).border=border;ws.getCell(col(sumName)+r).alignment={wrapText:true};ws.getCell(col(sumCol)+r).numFmt='#,##0.##';ws.getCell(col(sumCol)+r).border=border;const t=it.target_mode==='SHARED'?Number(it.target||0):members.reduce((a,m)=>a+target(it,m.user_id),0);ws.getCell(col(sumName)+r).note=undefined;ws.getCell(col(sumCol)+r).value=allProgress(it.id);ws.getCell(col(sumName)+r).value=(it.name||'-')+' / '+t;});
-    ws.columns=[{width:7},{width:28},...items.map(()=>({width:17})),{width:24},{width:4},{width:26},{width:15}];
+    ws.getCell(col(sumName)+'4').value='BARANG';ws.getCell(col(sumTarget)+'4').value='TARGET';ws.getCell(col(sumProgress)+'4').value='PROGRESS';
+    [ws.getCell(col(sumName)+'4'),ws.getCell(col(sumTarget)+'4'),ws.getCell(col(sumProgress)+'4')].forEach(x=>{x.font={bold:true,color:{argb:white}};x.fill={type:'pattern',pattern:'solid',fgColor:{argb:red}};x.alignment={horizontal:'center'}});
+    items.forEach((it,j)=>{const r=5+j;const t=it.target_mode==='SHARED'?Number(it.target||0):members.reduce((a,m)=>a+target(it,m.user_id),0);const p=allProgress(it.id);ws.getCell(col(sumName)+r).value=it.name||'-';ws.getCell(col(sumTarget)+r).value=t;ws.getCell(col(sumProgress)+r).value=p;[ws.getCell(col(sumName)+r),ws.getCell(col(sumTarget)+r),ws.getCell(col(sumProgress)+r)].forEach(x=>{x.border=border});ws.getCell(col(sumName)+r).alignment={wrapText:true};ws.getCell(col(sumTarget)+r).numFmt=ws.getCell(col(sumProgress)+r).numFmt='#,##0.##';});
+    ws.columns=[{width:7},{width:28},...items.map(()=>({width:17})),{width:24},{width:4},{width:24},{width:14},{width:14}];
     ws.getRow(1).height=25;ws.getRow(3).height=34;ws.getRow(hr).height=32;ws.autoFilter={from:'A8',to:col(lastCol)+'8'};
     const detail=wb.addWorksheet('Riwayat Setoran',{views:[{state:'frozen',ySplit:7}]});
     detail.mergeCells('A1:F4');detail.getCell('A1').value='RIWAYAT SETORAN — '+String(c.name||'').toUpperCase();detail.getCell('A1').font={bold:true,size:18,color:{argb:white}};detail.getCell('A1').fill={type:'pattern',pattern:'solid',fgColor:{argb:dark}};detail.getCell('A1').alignment={horizontal:'center',vertical:'middle',wrapText:true};addLogo(detail,{tl:{col:0.12,row:0.12},ext:{width:90,height:90}});
