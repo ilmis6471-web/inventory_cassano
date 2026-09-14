@@ -8,7 +8,7 @@ const multer=require('multer');
 const {Pool}=require('pg');
 const XLSX=require('xlsx');
 const ExcelJS=require('exceljs');
-const app=express();app.set('trust proxy',1);const PORT=process.env.PORT||3000;
+const app=express();app.set('trust proxy',1);const PORT=process.env.PORT||3000;const realtimeClients=new Set();function broadcastRealtime(type='data'){const msg='data: '+JSON.stringify({type,at:Date.now()})+'\n\n';for(const res of realtimeClients){try{res.write(msg)}catch{realtimeClients.delete(res)}}}app.use((req,res,next)=>{res.on('finish',()=>{if(['POST','PUT','PATCH','DELETE'].includes(req.method)&&res.statusCode<400&&req.path!=='/api/realtime')broadcastRealtime('data')});next()});
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:false,max:5});
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024}});
 const perms=["dashboard","items","items_manage","cart","order","orders","approve","history","stock","roles","users","roles_manage","setoran","setoran_manage","kas","kas_manage"];
