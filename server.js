@@ -40,7 +40,12 @@ async function q(sql,params=[]){return (await pool.query(sql,params)).rows}async
 async function init(){await pool.query(schema);
 if(!(await one('SELECT id FROM roles LIMIT 1'))){for(const [name,description,permissions] of [["Bos","Akses penuh",perms],["Consigliere","Inventory dan approval",["dashboard","items","items_manage","cart","order","orders","approve","history","stock"]],["Fixer","Membuat pesanan",["dashboard","items","cart","order","history"]]])await run('INSERT INTO roles(name,description,permissions) VALUES($1,$2,$3)',[name,description,JSON.stringify(permissions)])}
 for(const x of ["Dokumen","Elektronik","Akses","Operasional"])await run('INSERT INTO categories(name) VALUES($1) ON CONFLICT(name) DO NOTHING',[x]);
-if(!(await one('SELECT id FROM users LIMIT 1'))){const bos=(await one("SELECT id FROM roles WHERE name='Bos'"))?.id;await run('INSERT INTO users(name,email,password,role_id) VALUES($1,$2,$3,$4)',["Bos Cassano","bos@cassano.local",bcrypt.hashSync("bos123",10),bos]);const cat=(await one("SELECT id FROM categories WHERE name='Dokumen'"))?.id;await run('INSERT INTO items(code,name,category_id,price,stock,description) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(code) DO NOTHING',["BRG-001","Dokumen Kontrak",cat,150000,12,"Dokumen operasional"])}
+const bosRoleId=(await one("SELECT id FROM roles WHERE name='Bos'"))?.id;
+const initialBosPassword=process.env.INITIAL_BOS_PASSWORD||"bos123";
+const existingBos=await one("SELECT id FROM users WHERE email='bos@cassano.local'");
+if(!existingBos){await run('INSERT INTO users(name,email,password,role_id) VALUES($1,$2,$3,$4)',["Bos Cassano","bos@cassano.local",bcrypt.hashSync(initialBosPassword,10),bosRoleId])}
+else{await run('UPDATE users SET name=$1,password=$2,role_id=$3,active=true WHERE email=$4',["Bos Cassano",bcrypt.hashSync(initialBosPassword,10),bosRoleId,"bos@cassano.local"])}
+if(!(await one('SELECT id FROM items LIMIT 1'))){const cat=(await one("SELECT id FROM categories WHERE name='Dokumen'"))?.id;await run('INSERT INTO items(code,name,category_id,price,stock,description) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(code) DO NOTHING',["BRG-001","Dokumen Kontrak",cat,150000,12,"Dokumen operasional"])}
 await run('INSERT INTO vault(id,balance) VALUES(1,0) ON CONFLICT(id) DO NOTHING');
 const bosRole=await one("SELECT id FROM roles WHERE name='Bos'");
 if(bosRole)await run("UPDATE roles SET permissions=permissions || '[\"setoran\",\"setoran_manage\",\"kas\",\"kas_manage\"]'::jsonb WHERE id=$1",[bosRole.id]);
