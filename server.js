@@ -45,7 +45,6 @@ const initialBosPassword=process.env.INITIAL_BOS_PASSWORD||"bos123";
 const existingBos=await one("SELECT id FROM users WHERE email='bos@cassano.local'");
 if(!existingBos){await run('INSERT INTO users(name,email,password,role_id) VALUES($1,$2,$3,$4)',["Bos Cassano","bos@cassano.local",bcrypt.hashSync(initialBosPassword,10),bosRoleId])}
 else{await run('UPDATE users SET name=$1,password=$2,role_id=$3,active=true WHERE email=$4',["Bos Cassano",bcrypt.hashSync(initialBosPassword,10),bosRoleId,"bos@cassano.local"])}
-if(!(await one('SELECT id FROM items LIMIT 1'))){const cat=(await one("SELECT id FROM categories WHERE name='Dokumen'"))?.id;await run('INSERT INTO items(code,name,category_id,price,stock,description) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(code) DO NOTHING',["BRG-001","Dokumen Kontrak",cat,150000,12,"Dokumen operasional"])}
 await run('INSERT INTO vault(id,balance) VALUES(1,0) ON CONFLICT(id) DO NOTHING');
 const bosRole=await one("SELECT id FROM roles WHERE name='Bos'");
 if(bosRole)await run("UPDATE roles SET permissions=permissions || '[\"setoran\",\"setoran_manage\",\"kas\",\"kas_manage\"]'::jsonb WHERE id=$1",[bosRole.id]);
