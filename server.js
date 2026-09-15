@@ -118,7 +118,21 @@ app.post('/api/setoran/campaigns/:id/transactions',auth,async(req,res)=>{
   const item=await one('SELECT * FROM setoran_items WHERE id=$1 AND campaign_id=$2',[itemId,cid]);if(!item)return res.status(404).json({error:'Jenis setoran tidak ditemukan'});
   const uid=setoranManage(req)&&Number.isInteger(requestedUser)&&requestedUser>0?requestedUser:req.me.id;
   if(!(await one('SELECT id FROM setoran_members WHERE campaign_id=$1 AND user_id=$2',[cid,uid])))return res.status(403).json({error:'Member tersebut belum dimasukkan ke campaign'});
-  await run('INSERT INTO setoran_transactions(campaign_id,item_id,user_id,quantity,note,created_by) VALUES($1,$2,$3,$4,$5,$6)',[cid,itemId,uid,qty,req.body?.note||'',req.me.id]);res.json({ok:true})
+  const client=await pool.connect();try{await client.query('BEGIN');
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[String(item.name).trim().toLowerCase()]);
+  let inv=(await client.query('SELECT * FROM items WHERE lower(trim(name))=lower(trim($1)) ORDER BY id LIMIT 1 FOR UPDATE',[String(item.name).trim()])).rows[0];
+  let created=false;
+  if(!inv){
+    const code='SET-'+Date.now().toString(36).toUpperCase()+'-'+Math.floor(Math.random()*1000);
+    inv=(await client.query('INSERT INTO items(code,name,category_id,price,stock,description,image) VALUES($1,$2,NULL,0,$3,$4,NULL) RETURNING *',[code,String(item.name).trim(),qty,'Dibuat otomatis dari Setoran'])).rows[0];
+    created=true;
+  }else{
+    inv=(await client.query('UPDATE items SET stock=stock+$1 WHERE id=$2 RETURNING *',[qty,inv.id])).rows[0];
+  }
+  await client.query('INSERT INTO movements(item_id,type,qty,user_id,reference,note) VALUES($1,$2,$3,$4,$5,$6)',[inv.id,'IN',qty,req.me.id,'SETORAN-'+cid,'Setoran campaign: '+c.name]);
+  await client.query('INSERT INTO setoran_transactions(campaign_id,item_id,user_id,quantity,note,created_by) VALUES($1,$2,$3,$4,$5,$6)',[cid,itemId,uid,qty,req.body?.note||'',req.me.id]);
+  await client.query('COMMIT');res.json({ok:true,item_id:inv.id,item_created:created,stock:inv.stock});
+}catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}
 });
 app.post('/api/setoran/campaigns/:id/cash',auth,async(req,res)=>{
   if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
