@@ -9,7 +9,6 @@ jobs:
     timeout-minutes: 30
 
     env:
-      PG_VERSION: "17"
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       RAILWAY_DATABASE_URL: ${{ secrets.RAILWAY_DATABASE_URL }}
 
@@ -17,7 +16,10 @@ jobs:
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client-${PG_VERSION}
+          sudo apt-get install -y postgresql-client
+          pg_dump --version
+          pg_restore --version
+          psql --version
 
       - name: Check connection variables
         run: |
