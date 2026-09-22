@@ -26,21 +26,21 @@ jobs:
 
       - name: Check source database
         run: |
-          docker run --rm -e DATABASE_URL="${NEON_DATABASE_URL}" postgres:16             psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "SELECT current_database(), version();"
+          docker run --rm postgres:16             psql "${NEON_DATABASE_URL}"             -v ON_ERROR_STOP=1             -c "SELECT current_database(), version();"
 
       - name: Dump Neon database
         run: |
-          docker run --rm             -e DATABASE_URL="${NEON_DATABASE_URL}"             -v "${RUNNER_TEMP}:/backup"             postgres:16             pg_dump "${DATABASE_URL}"               --format=custom               --no-owner               --no-acl               --file=/backup/inventory-cassano.dump
+          docker run --rm             -v "${RUNNER_TEMP}:/backup"             postgres:16             pg_dump "${NEON_DATABASE_URL}"               --format=custom               --no-owner               --no-acl               --file=/backup/inventory-cassano.dump
           ls -lh "${RUNNER_TEMP}/inventory-cassano.dump"
 
       - name: Restore into Railway PostgreSQL
         run: |
-          docker run --rm             -e DATABASE_URL="${RAILWAY_DATABASE_URL}"             -v "${RUNNER_TEMP}:/backup"             postgres:16             pg_restore               --dbname="${DATABASE_URL}"               --no-owner               --no-acl               --exit-on-error               /backup/inventory-cassano.dump
+          docker run --rm             -v "${RUNNER_TEMP}:/backup"             postgres:16             pg_restore               --dbname="${RAILWAY_DATABASE_URL}"               --no-owner               --no-acl               --exit-on-error               /backup/inventory-cassano.dump
 
       - name: Verify Railway database
         run: |
-          docker run --rm -e DATABASE_URL="${RAILWAY_DATABASE_URL}" postgres:16             psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "\\dt"
-          docker run --rm -e DATABASE_URL="${RAILWAY_DATABASE_URL}" postgres:16             psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -c "SELECT count(*) AS table_count FROM information_schema.tables WHERE table_schema='public';"
+          docker run --rm postgres:16             psql "${RAILWAY_DATABASE_URL}"             -v ON_ERROR_STOP=1             -c "\\dt"
+          docker run --rm postgres:16             psql "${RAILWAY_DATABASE_URL}"             -v ON_ERROR_STOP=1             -c "SELECT count(*) AS table_count FROM information_schema.tables WHERE table_schema='public';"
 
       - name: Remove dump
         if: always()
