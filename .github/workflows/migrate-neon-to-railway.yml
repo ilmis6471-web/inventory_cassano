@@ -13,13 +13,13 @@ jobs:
       RAILWAY_DATABASE_URL: ${{ secrets.RAILWAY_DATABASE_URL }}
 
     steps:
-      - name: Install PostgreSQL client
+      - name: Install PostgreSQL 16 client
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          pg_dump --version
-          pg_restore --version
-          psql --version
+          sudo apt-get install -y postgresql-client-16
+          /usr/lib/postgresql/16/bin/pg_dump --version
+          /usr/lib/postgresql/16/bin/pg_restore --version
+          /usr/lib/postgresql/16/bin/psql --version
 
       - name: Check connection variables
         run: |
@@ -28,11 +28,11 @@ jobs:
 
       - name: Check source database
         run: |
-          psql "${NEON_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "SELECT current_database(), version();"
+          /usr/lib/postgresql/16/bin/psql "${NEON_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "SELECT current_database(), version();"
 
       - name: Dump Neon database
         run: |
-          pg_dump "${NEON_DATABASE_URL}" \
+          /usr/lib/postgresql/16/bin/pg_dump "${NEON_DATABASE_URL}" \
             --format=custom \
             --no-owner \
             --no-acl \
@@ -41,7 +41,7 @@ jobs:
 
       - name: Restore into Railway PostgreSQL
         run: |
-          pg_restore \
+          /usr/lib/postgresql/16/bin/pg_restore \
             --dbname="${RAILWAY_DATABASE_URL}" \
             --no-owner \
             --no-acl \
@@ -50,8 +50,8 @@ jobs:
 
       - name: Verify Railway database
         run: |
-          psql "${RAILWAY_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "\\dt"
-          psql "${RAILWAY_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "SELECT count(*) AS table_count FROM information_schema.tables WHERE table_schema='public';"
+          /usr/lib/postgresql/16/bin/psql "${RAILWAY_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "\\dt"
+          /usr/lib/postgresql/16/bin/psql "${RAILWAY_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "SELECT count(*) AS table_count FROM information_schema.tables WHERE table_schema='public';"
 
       - name: Remove dump
         if: always()
