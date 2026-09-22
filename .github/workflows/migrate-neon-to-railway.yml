@@ -1,0 +1,56 @@
+name: Migrate Neon to Railway PostgreSQL
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      PG_VERSION: "17"
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      RAILWAY_DATABASE_URL: ${{ secrets.RAILWAY_DATABASE_URL }}
+
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-${PG_VERSION}
+
+      - name: Check connection variables
+        run: |
+          test -n "${NEON_DATABASE_URL}" || (echo "Missing NEON_DATABASE_URL secret" && exit 1)
+          test -n "${RAILWAY_DATABASE_URL}" || (echo "Missing RAILWAY_DATABASE_URL secret" && exit 1)
+
+      - name: Check source database
+        run: |
+          psql "${NEON_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "SELECT current_database(), version();"
+
+      - name: Dump Neon database
+        run: |
+          pg_dump "${NEON_DATABASE_URL}" \
+            --format=custom \
+            --no-owner \
+            --no-acl \
+            --file="${RUNNER_TEMP}/inventory-cassano.dump"
+          ls -lh "${RUNNER_TEMP}/inventory-cassano.dump"
+
+      - name: Restore into Railway PostgreSQL
+        run: |
+          pg_restore \
+            --dbname="${RAILWAY_DATABASE_URL}" \
+            --no-owner \
+            --no-acl \
+            --exit-on-error \
+            "${RUNNER_TEMP}/inventory-cassano.dump"
+
+      - name: Verify Railway database
+        run: |
+          psql "${RAILWAY_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "\\dt"
+          psql "${RAILWAY_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "SELECT count(*) AS table_count FROM information_schema.tables WHERE table_schema='public';"
+
+      - name: Remove dump
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/inventory-cassano.dump"
