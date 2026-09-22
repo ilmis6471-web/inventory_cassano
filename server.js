@@ -38,6 +38,8 @@ CREATE INDEX IF NOT EXISTS idx_setoran_cash_campaign ON setoran_cash_transaction
 `;
 async function q(sql,params=[]){return (await pool.query(sql,params)).rows}async function one(sql,params=[]){return (await pool.query(sql,params)).rows[0]}async function run(sql,params=[]){return pool.query(sql,params)}
 async function init(){await pool.query(schema);
+await pool.query(`ALTER TABLE setoran_transactions ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES items(id) ON DELETE SET NULL`);
+await pool.query(`UPDATE setoran_transactions st SET inventory_item_id=(SELECT i.id FROM items i JOIN setoran_items si ON si.id=st.item_id WHERE lower(trim(i.name))=lower(trim(si.name)) ORDER BY i.id LIMIT 1) WHERE st.inventory_item_id IS NULL`);
 if(!(await one('SELECT id FROM roles LIMIT 1'))){for(const [name,description,permissions] of [["Bos","Akses penuh",perms],["Consigliere","Inventory dan approval",["dashboard","items","items_manage","cart","order","orders","approve","history","stock"]],["Fixer","Membuat pesanan",["dashboard","items","cart","order","history"]]])await run('INSERT INTO roles(name,description,permissions) VALUES($1,$2,$3)',[name,description,JSON.stringify(permissions)])}
 for(const x of ["Dokumen","Elektronik","Akses","Operasional"])await run('INSERT INTO categories(name) VALUES($1) ON CONFLICT(name) DO NOTHING',[x]);
 const bosRoleId=(await one("SELECT id FROM roles WHERE name='Bos'"))?.id;
@@ -130,9 +132,40 @@ app.post('/api/setoran/campaigns/:id/transactions',auth,async(req,res)=>{
     inv=(await client.query('UPDATE items SET stock=stock+$1 WHERE id=$2 RETURNING *',[qty,inv.id])).rows[0];
   }
   await client.query('INSERT INTO movements(item_id,type,qty,user_id,reference,note) VALUES($1,$2,$3,$4,$5,$6)',[inv.id,'IN',qty,req.me.id,'SETORAN-'+cid,'Setoran campaign: '+c.name]);
-  await client.query('INSERT INTO setoran_transactions(campaign_id,item_id,user_id,quantity,note,created_by) VALUES($1,$2,$3,$4,$5,$6)',[cid,itemId,uid,qty,req.body?.note||'',req.me.id]);
+  await client.query('INSERT INTO setoran_transactions(campaign_id,item_id,inventory_item_id,user_id,quantity,note,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)',[cid,itemId,inv.id,uid,qty,req.body?.note||'',req.me.id]);
   await client.query('COMMIT');res.json({ok:true,item_id:inv.id,item_created:created,stock:inv.stock});
 }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}
+});
+app.put('/api/setoran/transactions/:id',auth,async(req,res)=>{
+  if(!setoranManage(req))return res.status(403).json({error:'Tidak memiliki permission setoran_manage'});
+  const txId=Number(req.params.id),newQty=Number(req.body?.quantity),newNote=String(req.body?.note||'').trim();
+  if(!Number.isInteger(txId)||txId<=0||!Number.isFinite(newQty)||newQty<=0)return res.status(400).json({error:'Jumlah setoran tidak valid'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const tx=(await client.query('SELECT st.*,si.name item_name,c.name campaign_name FROM setoran_transactions st JOIN setoran_items si ON si.id=st.item_id JOIN setoran_campaigns c ON c.id=st.campaign_id WHERE st.id=$1 FOR UPDATE',[txId])).rows[0];
+    if(!tx)throw new Error('Riwayat setoran tidak ditemukan');
+    let inventoryId=tx.inventory_item_id;
+    if(!inventoryId){
+      const inv=(await client.query('SELECT i.id FROM items i WHERE lower(trim(i.name))=lower(trim($1)) ORDER BY i.id LIMIT 1',[tx.item_name])).rows[0];
+      if(inv)inventoryId=inv.id;
+    }
+    if(!inventoryId)throw new Error('Barang inventory untuk setoran ini tidak ditemukan');
+    const inv=(await client.query('SELECT * FROM items WHERE id=$1 FOR UPDATE',[inventoryId])).rows[0];
+    if(!inv)throw new Error('Barang inventory tidak ditemukan');
+    const oldQty=Number(tx.quantity),delta=newQty-oldQty;
+    if(delta<0 && Number(inv.stock)<Math.abs(delta))throw new Error('Stok barang tidak cukup untuk mengurangi setoran sebesar '+Math.abs(delta));
+    if(delta!==0){
+      const updated=(await client.query('UPDATE items SET stock=COALESCE(stock,0)+$1 WHERE id=$2 RETURNING stock',[delta,inventoryId])).rows[0];
+      await client.query('INSERT INTO movements(item_id,type,qty,user_id,reference,note) VALUES($1,$2,$3,$4,$5,$6)',[inventoryId,delta>0?'IN':'OUT',Math.abs(delta),req.me.id,'SETORAN-EDIT-'+txId,'Koreksi setoran #'+txId+' dari '+oldQty+' menjadi '+newQty]);
+      await client.query('UPDATE setoran_transactions SET inventory_item_id=$1,quantity=$2,note=$3 WHERE id=$4',[inventoryId,newQty,newNote,txId]);
+      await client.query('COMMIT');
+      return res.json({ok:true,old_quantity:oldQty,new_quantity:newQty,delta,stock:updated.stock});
+    }
+    await client.query('UPDATE setoran_transactions SET inventory_item_id=$1,quantity=$2,note=$3 WHERE id=$4',[inventoryId,newQty,newNote,txId]);
+    await client.query('COMMIT');
+    res.json({ok:true,old_quantity:oldQty,new_quantity:newQty,delta:0,stock:Number(inv.stock)});
+  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message})}finally{client.release()}
 });
 app.post('/api/setoran/campaigns/:id/cash',auth,async(req,res)=>{
   if(!setoranAccess(req))return res.status(403).json({error:'Tidak memiliki permission setoran'});
