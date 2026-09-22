@@ -4,7 +4,6 @@ const path=require('path');
 const fs=require('fs');
 const bcrypt=require('bcryptjs');
 const session=require('express-session');
-const pgSession=require('connect-pg-simple')(session);
 const multer=require('multer');
 const {Pool}=require('pg');
 const XLSX=require('xlsx');
@@ -55,7 +54,7 @@ const conRole=await one("SELECT id FROM roles WHERE name='Consigliere'");
 if(conRole)await run("UPDATE roles SET permissions=permissions || '[\"setoran\",\"setoran_manage\",\"kas\",\"kas_manage\"]'::jsonb WHERE id=$1",[conRole.id]);
 await run(`UPDATE items i SET stock=x.net_stock FROM (SELECT item_id,SUM(CASE WHEN type='IN' THEN qty WHEN type='OUT' THEN -qty ELSE 0 END)::int net_stock FROM movements GROUP BY item_id) x WHERE i.id=x.item_id AND i.stock=0 AND x.net_stock>0`);
 }
-app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));app.use(session({store:new pgSession({pool,createTableIfMissing:true}),secret:process.env.SESSION_SECRET||'CHANGE_ME',resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production'}}));app.use(express.static(__dirname));
+app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));app.use(session({secret:process.env.SESSION_SECRET||'CHANGE_ME',resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production'}}));app.use(express.static(__dirname));
 const imageData=req=>req.file?`data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`:null;
 async function me(req){if(!req.session.user)return null;return one('SELECT u.*,r.name role,r.permissions FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1',[req.session.user.id])}
 async function auth(req,res,next){try{const u=await me(req);if(!u)return res.status(401).json({error:'Belum login'});if(!u.active)return res.status(403).json({error:'Akun nonaktif'});req.me=u;next()}catch(e){res.status(500).json({error:e.message})}}
