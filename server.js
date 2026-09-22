@@ -4,12 +4,13 @@ const path=require('path');
 const fs=require('fs');
 const bcrypt=require('bcryptjs');
 const session=require('express-session');
+const pgSession=require('connect-pg-simple')(session);
 const multer=require('multer');
 const {Pool}=require('pg');
 const XLSX=require('xlsx');
 const ExcelJS=require('exceljs');
 const app=express();app.set('trust proxy',1);const PORT=process.env.PORT||3000;const realtimeClients=new Set();function broadcastRealtime(type='data'){const msg='data: '+JSON.stringify({type,at:Date.now()})+'\n\n';for(const res of realtimeClients){try{res.write(msg)}catch{realtimeClients.delete(res)}}}app.use((req,res,next)=>{res.on('finish',()=>{if(['POST','PUT','PATCH','DELETE'].includes(req.method)&&res.statusCode<400&&req.path!=='/api/realtime')broadcastRealtime('data')});next()});
-const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:false,max:5});
+const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:false,max:10,idleTimeoutMillis:30000,connectionTimeoutMillis:10000});
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024}});
 const perms=["dashboard","items","items_manage","cart","order","orders","approve","history","stock","roles","users","roles_manage","setoran","setoran_manage","kas","kas_manage"];
 const schema=`
@@ -54,14 +55,14 @@ const conRole=await one("SELECT id FROM roles WHERE name='Consigliere'");
 if(conRole)await run("UPDATE roles SET permissions=permissions || '[\"setoran\",\"setoran_manage\",\"kas\",\"kas_manage\"]'::jsonb WHERE id=$1",[conRole.id]);
 await run(`UPDATE items i SET stock=x.net_stock FROM (SELECT item_id,SUM(CASE WHEN type='IN' THEN qty WHEN type='OUT' THEN -qty ELSE 0 END)::int net_stock FROM movements GROUP BY item_id) x WHERE i.id=x.item_id AND i.stock=0 AND x.net_stock>0`);
 }
-app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));app.use(session({secret:process.env.SESSION_SECRET||'CHANGE_ME',resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production'}}));app.use(express.static(__dirname));
+app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));app.use(session({store:new pgSession({pool,createTableIfMissing:true}),secret:process.env.SESSION_SECRET||'CHANGE_ME',resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production'}}));app.use(express.static(__dirname));
 const imageData=req=>req.file?`data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`:null;
 async function me(req){if(!req.session.user)return null;return one('SELECT u.*,r.name role,r.permissions FROM users u JOIN roles r ON r.id=u.role_id WHERE u.id=$1',[req.session.user.id])}
 async function auth(req,res,next){try{const u=await me(req);if(!u)return res.status(401).json({error:'Belum login'});if(!u.active)return res.status(403).json({error:'Akun nonaktif'});req.me=u;next()}catch(e){res.status(500).json({error:e.message})}}
 app.get('/api/realtime',auth,(req,res)=>{res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache');res.setHeader('Connection','keep-alive');res.flushHeaders?.();res.write('data: '+JSON.stringify({type:'connected',at:Date.now()})+'\n\n');realtimeClients.add(res);const hb=setInterval(()=>{try{res.write(': ping\n\n')}catch{}},20000);req.on('close',()=>{clearInterval(hb);realtimeClients.delete(res)});});
 function has(u,p){return Array.isArray(u.permissions)?u.permissions.includes(p):JSON.parse(u.permissions||'[]').includes(p)}function need(p){return (req,res,next)=>{if(!has(req.me,p))return res.status(403).json({error:'Role tidak memiliki akses: '+p});next()}}function vaultCanEdit(req){return req.me.role==='Bos'||req.me.role==='Consigliere'}
 function kasCanEdit(req){return has(req.me,'kas_manage')||req.me.role==='Bos'||req.me.role==='Consigliere'}
-app.post('/api/login',async(req,res)=>{try{const u=await one('SELECT * FROM users WHERE email=$1',[req.body.email]);if(!u||!bcrypt.compareSync(req.body.password,u.password))return res.status(401).json({error:'Email atau password salah'});if(!u.active)return res.status(403).json({error:'Akun nonaktif'});req.session.user={id:u.id};req.session.save(err=>{if(err)return res.status(500).json({error:'Gagal menyimpan sesi'});res.json({ok:true})})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/login',async(req,res)=>{try{const u=await one('SELECT * FROM users WHERE email=$1',[req.body.email]);if(!u||!(await bcrypt.compare(req.body.password,u.password)))return res.status(401).json({error:'Email atau password salah'});if(!u.active)return res.status(403).json({error:'Akun nonaktif'});req.session.user={id:u.id};req.session.save(err=>{if(err)return res.status(500).json({error:'Gagal menyimpan sesi'});res.json({ok:true})})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/logout',(req,res)=>req.session.destroy(()=>res.json({ok:true})));app.get('/health',(req,res)=>res.json({ok:true,service:'inventory-cassano',database:'postgresql'}));app.get('/api/me',auth,async(req,res)=>res.json({id:req.me.id,name:req.me.name,email:req.me.email,role:req.me.role,permissions:req.me.permissions}));
 app.get('/api/items',auth,async(req,res)=>res.json(await q('SELECT i.*,c.name category FROM items i LEFT JOIN categories c ON c.id=i.category_id ORDER BY i.id DESC')));app.get('/api/categories',auth,async(req,res)=>res.json(await q('SELECT * FROM categories ORDER BY name'));
 app.post('/api/items',auth,need('items_manage'),upload.single('photo'),async(req,res)=>{try{const b=req.body;const r=await one('INSERT INTO items(code,name,category_id,price,stock,description,image) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[b.code,b.name,b.category_id||null,+b.price||0,+b.stock||0,b.description||'',imageData(req)]);res.json({id:r.id})}catch(e){res.status(400).json({error:e.message})}});
